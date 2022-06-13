@@ -1,0 +1,23 @@
+*__pycache__*
+*.DS_Store*
+.vscode
+colabs/figures
+
+# Distribution / packaging
+*.egg-info/
+
+
+results
+
+# Logging
+wandb
+
+# Linting
+.trunk
+.flake8
+.markdownlint.yaml
+.isort.cfg
+
+# Checkpoints
+checkpoints
+artifacts
