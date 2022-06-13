@@ -1,4 +1,4 @@
-"""Image dataset functionality, borrowed from https://github.com/JamesAllingham/learning-invariances/blob/main/src/data/image.py."""
+"""Image dataset loading functionality."""
 from pathlib import Path
 from typing import Tuple, Union
 
@@ -48,7 +48,7 @@ METADATA = {
         'CIFAR10': (0.2470, 0.2435, 0.2616),
         'CIFAR100': (0.2673, 0.2564, 0.2762),
         'Imagenet': (0.229, 0.224, 0.225),
-        }
+    }
 }
 
 
@@ -118,7 +118,7 @@ def get_image_dataset(
         random_seed: the `int` random seed for splitting the val data and
             applying random affine transformations. (Default: 42)
         perform_augmentations: a `bool` indicating whether to apply random
-            affine transformations to the training data. (Default: `True`)
+            transformations to the training data. (Default: `True`)
     Returns:
         `(train_dataset, test_dataset)` if `val_percent` is 0 otherwise
             `(train_dataset, test_dataset, val_dataset)`
@@ -152,8 +152,9 @@ def get_image_dataset(
 
     if flatten_img:
         common_transforms += [Flatten()]
-    
-    # Important when fitting linear model and sample-then-optimise
+
+    # We need to disable train augmentations when fitting mode of linear model
+    # and for sample-then-optimise posterior sampling.
     if perform_augmentations:
         train_augmentations = TRAIN_TRANSFORMATIONS[dataset_name]
     else:

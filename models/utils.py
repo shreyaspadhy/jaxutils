@@ -44,7 +44,7 @@ def convert_lenet_param_keys(pytorch_name, model_name='LeNetSmall'):
 
     # fc.{weight|bias} -> (params, Dense_0, {kernel|bias})
     if split[0] == 'fc':
-        return ("params", 'Dense_0', FC_MAP[split[1]])
+        return ("params", 'dense', FC_MAP[split[1]])
 
 
 def convert_resnet_param_keys(pytorch_name, model_name='resnet18'):

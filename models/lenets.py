@@ -58,30 +58,12 @@ class LeNet(nn.Module):
     n_out: int
     dtype: Any = jnp.float32
 
-    @nn.compact
-    def __call__(self, x):
-        x = conv5_block(32, stride=2)(x)
-        x = conv3_block(32, stride=2)(x)
-        x = conv3_block(64, stride=2)(x)
-
-        # Similar to PyTorch nn.AdaptiveAvgPool2d((1, 1))
-        x = jnp.mean(x, axis=(1, 2))
-        x = nn.Dense(self.n_out, dtype=self.dtype)(x)
-        x = jnp.asarray(x, self.dtype)
-
-        return x
-
-
-class LeNetSmall(nn.Module):
-    n_out: int
-    dtype: Any = jnp.float32
-
     def setup(self):
-        self.conv1 = conv5_block(16, stride=2)
+        self.conv1 = conv5_block(32, stride=2)
         self.conv2 = conv3_block(32, stride=2)
-        self.conv3 = conv3_block(32, stride=2)
+        self.conv3 = conv3_block(64, stride=2)
+        self.dense = nn.Dense(self.n_out, dtype=self.dtype)
 
-    @nn.compact
     def __call__(self, x, train: bool = True):
         x = self.conv1(x, train=train)
         x = self.conv2(x, train=train)
@@ -89,7 +71,16 @@ class LeNetSmall(nn.Module):
 
         # Similar to PyTorch nn.AdaptiveAvgPool2d((1, 1))
         x = jnp.mean(x, axis=(1, 2))
-        x = nn.Dense(self.n_out, dtype=self.dtype)(x)
+        x = self.dense(x)
         x = jnp.asarray(x, self.dtype)
 
         return x
+
+
+class LeNetSmall(LeNet):
+
+    def setup(self):
+        self.conv1 = conv5_block(16, stride=2)
+        self.conv2 = conv3_block(32, stride=2)
+        self.conv3 = conv3_block(32, stride=2)
+        self.dense = nn.Dense(self.n_out, dtype=self.dtype)
