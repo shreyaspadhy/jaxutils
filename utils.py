@@ -1,6 +1,17 @@
 """Common utility functions."""
 
 import collections
+import os
+
+import jax
+import jax.numpy as jnp
+import jax.random as jrnd
+import numpy as np
+import tensorflow as tf
+import torch
+from flax.traverse_util import flatten_dict, ModelParamTraversal, unflatten_dict
+
+import wandb
 
 
 def setup_training(wandb_run):
@@ -58,6 +69,8 @@ def log_model_params(
         wandb_run: Weights and Biases run object.
         as_summary (bool): Whether to log as a wandb summary.
     """
+    # TODO: Check that params are not already flat
+    params = flatten_dict(params)
     for param_name, param in params.items():
         if as_summary:
             wandb_run.summary.update(
@@ -65,3 +78,5 @@ def log_model_params(
                     wandb.Histogram(np.asarray(param))})
         else:
             wandb_run.log({param_name: wandb.Histogram(np.asarray(param))})
+
+    params = unflatten_dict(params)
