@@ -33,6 +33,15 @@ METADATA = {
         'CIFAR10': 10_000,
         'CIFAR100': 10_000,
     },
+    'num_classes': {
+        'MNIST': 10,
+        'FashionMNIST': 10,
+        'KMNIST': 10,
+        'SVHN': 10,
+        'CIFAR10': 10,
+        'CIFAR100': 100,
+        'Imagenet': 1000,
+    },
     'mean': {
         'MNIST': (0.1307,),
         'FashionMNIST': (0.2860,),
@@ -102,10 +111,7 @@ def get_image_dataset(
     val_percent: float = 0.1,
     random_seed: int = 42,
     perform_augmentations: bool = True,
-) -> Union[
-    Tuple[data.Dataset, data.Dataset], Tuple[data.Dataset,
-                                             data.Dataset, data.Dataset]
-]:
+) -> Tuple[data.Dataset, data.Dataset, data.Dataset]:
     """Provides PyTorch `Dataset`s for the specified image dataset_name.
     Args:
         dataset_name: the `str` name of the dataset. E.g. `'MNIST'`.
@@ -218,7 +224,7 @@ def get_image_dataset(
 
         return train_dataset, test_dataset, val_dataset
     else:
-        return train_dataset, test_dataset
+        return train_dataset, test_dataset, None
 
 
 def train_val_split_sizes(num_train: int, val_percent: float) -> Tuple[int, int]:
