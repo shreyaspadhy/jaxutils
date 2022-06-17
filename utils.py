@@ -21,8 +21,8 @@ def setup_training(wandb_run):
     tf.config.experimental.set_visible_devices([], "GPU")
 
     # Without this, JAX is automatically using 90% GPU for pre-allocation.
-    os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.50"
-
+    os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.3"
+    # os.environ["XLA_FLAGS"] = "--xla_gpu_strict_conv_algorithm_picker=false"
     # Disable logging of compiles.
     jax.config.update("jax_log_compiles", False)
 
