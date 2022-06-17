@@ -1,6 +1,6 @@
 """Image dataset loading functionality."""
 from pathlib import Path
-from typing import Tuple, Union
+from typing import Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -111,7 +111,7 @@ def get_image_dataset(
     val_percent: float = 0.1,
     random_seed: int = 42,
     perform_augmentations: bool = True,
-) -> Tuple[data.Dataset, data.Dataset, data.Dataset]:
+) -> Tuple[data.Dataset, data.Dataset, Optional[data.Dataset]]:
     """Provides PyTorch `Dataset`s for the specified image dataset_name.
     Args:
         dataset_name: the `str` name of the dataset. E.g. `'MNIST'`.
