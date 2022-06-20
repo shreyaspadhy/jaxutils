@@ -34,9 +34,9 @@ class TrainState(train_state.TrainState):
         )
 
 
-def aggregate_metrics_dict(list_of_metrics_dicts, dataloader, prefix):
+def aggregate_metrics_dict(list_of_metrics_dicts, len_dataset, prefix):
     """Sum over list of batch_metrics dicts, and divide by dataset size."""
     metrics_dict = tree_map(
-        lambda x: jnp.sum(x) / len(dataloader.dataset),
+        lambda x: jnp.sum(x) / len_dataset,
         tree_concatenate(list_of_metrics_dicts))
     return {f'{prefix}/{k}': v for k, v in metrics_dict.items()}

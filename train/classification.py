@@ -47,7 +47,7 @@ def create_crossentropy_loss(
 
         batch_metrics = tree_map(lambda x: agg(x, axis=0), batch_metrics)
 
-        loss = batch_metrics['neg_log_likelihood']
+        loss = batch_metrics['nll']
 
         return loss, (batch_metrics, new_state)
 
@@ -92,6 +92,7 @@ def _create_loss_and_metrics(batch_logits, batch_labels, num_classes):
     accuracy = (jnp.argmax(batch_logits, -1) == batch_labels)
 
     return {
-        'neg_log_likelihood': loss,
-        'accuracy': accuracy
+        'nll': loss,
+        'accuracy': accuracy,
+        'error': 1 - accuracy
     }

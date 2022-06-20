@@ -49,7 +49,7 @@ def flatten_nested_dict(nested_dict, parent_key='', sep='.'):
 def generate_keys(seed: int):
     """Generate keys for random number generators.
     Args:
-        seed (int): Random seed.
+        seed: Random seed.
     Returns:
         model_rng (jax.random.PRNGKey): JAX PRNG key.
         datasplit_rng (int): int for Pytorch random split.
@@ -67,11 +67,11 @@ def log_model_params(
         param_prefix: Optional[str] = None):
     """Log model parameter tensors as histograms to wandb.
     Args:
-        params (Pytree): Model parameters to log as histograms.
+        params: Model parameters to log as histograms.
         wandb_run: Weights and Biases run object.
-        as_summary (bool): Whether to log as a wandb summary.
-        summary_id (str): ID of the summary.
-        param_prefix (str): Prefix to add to the parameter names.
+        as_summary: Whether to log as a wandb summary.
+        summary_id: ID of the summary.
+        param_prefix: Prefix to add to the parameter names.
     """
     # TODO: Check that params are not already flat
     params = flatten_dict(params)
