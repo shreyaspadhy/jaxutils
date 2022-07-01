@@ -45,6 +45,6 @@ def aggregated_metrics_dict(list_of_metrics_dicts, len_dataset, prefix):
 def batchwise_metrics_dict(metrics_dict, batch_size, prefix):
     """Divide metrics_dict by batch_size."""
     new_metrics_dict = {
-        f'{prefix}/{k}': v for k, v in metrics_dict.items()}
+        f'{prefix}/{k}': v / batch_size for k, v in metrics_dict.items()}
 
     return new_metrics_dict
