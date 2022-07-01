@@ -108,3 +108,25 @@ def raise_if_not_in_list(val, valid_options, varname):
     if val not in valid_options:
         msg = f'`{varname}` should be one of `{valid_options}` but was `{val}` instead.'
         raise RuntimeError(msg)
+
+
+def flatten_params(params):
+    vals = []
+    for k, v in flatten_dict(params).items():
+        keys = '_'.join(k)
+        if "BatchNorm" not in keys:
+            vals.append(v.ravel())
+
+    vals = jnp.concatenate(vals)
+
+    return vals
+
+
+def print_param_shapes(params):
+    for k, v in flatten_dict(params).items():
+        print(k, v.shape)
+
+
+def print_params(params):
+    for k, v in flatten_dict(params).items():
+        print(k, v)
