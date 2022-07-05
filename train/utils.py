@@ -5,6 +5,9 @@ from jaxutils.utils import tree_concatenate
 import optax
 import jax.numpy as jnp
 
+import ml_collections
+from typing import Optional
+
 
 class TrainState(train_state.TrainState):
     """A Flax train state that also manages batch norm statistics."""
@@ -48,3 +51,25 @@ def batchwise_metrics_dict(metrics_dict, batch_size, prefix):
         f'{prefix}/{k}': v / batch_size for k, v in metrics_dict.items()}
 
     return new_metrics_dict
+
+
+def get_lr_and_schedule(
+        optim_name: str,
+        optim_config: ml_collections.ConfigDict,
+        lr_schedule_name: Optional[str],
+        lr_schedule_config: Optional[ml_collections.ConfigDict]):
+    """Returns an optimizer with (optional lr_schedule)."""
+    if lr_schedule_name is not None:
+        schedule = getattr(optax, lr_schedule_name)
+        lr = schedule(
+            init_value=optim_config.lr,
+            decay_rate=lr_schedule_config.decay_rate,
+            transition_steps=lr_schedule_config.transition_steps,)
+    else:
+        lr = optim_config.lr
+
+    optimizer = getattr(optax, optim_name)
+    optimizer = optax.inject_hyperparams(optimizer)
+    optimizer = optimizer(learning_rate=lr)
+
+    return optimizer
