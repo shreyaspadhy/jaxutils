@@ -59,7 +59,7 @@ def get_lr_and_schedule(
         lr_schedule_name: Optional[str],
         lr_schedule_config: Optional[ml_collections.ConfigDict]):
     """Returns an optimizer with (optional lr_schedule)."""
-    if lr_schedule_name is not None:
+    if lr_schedule_name is not None and lr_schedule_config is not None:
         schedule = getattr(optax, lr_schedule_name)
         lr = schedule(
             init_value=optim_config.lr,
