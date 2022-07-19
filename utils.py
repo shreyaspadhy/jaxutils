@@ -6,9 +6,10 @@ import os
 from typing import Callable, Optional
 import jax
 import jax.numpy as jnp
+from jax.config import config
 from jax import random
 import numpy as np
-import tensorflow as tf
+# import tensorflow as tf
 import torch
 from flax.traverse_util import flatten_dict, ModelParamTraversal, unflatten_dict
 
@@ -17,19 +18,30 @@ import wandb
 
 def setup_training(wandb_run):
     """Helper function that sets up training configs and logs to wandb."""
-    # TF can hog GPU memory, so we hide the GPU device from it.
-    tf.config.experimental.set_visible_devices([], "GPU")
+    if not wandb_run.config.use_tpu:
+        # TF can hog GPU memory, so we hide the GPU device from it.
+        tf.config.experimental.set_visible_devices([], "GPU")
 
-    # Without this, JAX is automatically using 90% GPU for pre-allocation.
-    os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.3"
-    # os.environ["XLA_FLAGS"] = "--xla_gpu_strict_conv_algorithm_picker=false"
-    # Disable logging of compiles.
-    jax.config.update("jax_log_compiles", False)
+        # Without this, JAX is automatically using 90% GPU for pre-allocation.
+        os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.3"
+        # os.environ["XLA_FLAGS"] = "--xla_gpu_strict_conv_algorithm_picker=false"
+        # Disable logging of compiles.
+        jax.config.update("jax_log_compiles", False)
 
-    # Log various JAX configs to wandb, and locally.
-    wandb_run.summary.update({
-        "jax_process_index": jax.process_index(),
-        "jax.process_count": jax.process_count(), })
+        # Log various JAX configs to wandb, and locally.
+        wandb_run.summary.update({
+            "jax_process_index": jax.process_index(),
+            "jax.process_count": jax.process_count(), })
+    else:
+        # config.FLAGS.jax_xla_backend = "tpu_driver"
+        # config.FLAGS.jax_backend_target = os.environ['TPU_NAME']
+        # DEVICE_COUNT = len(jax.local_devices())
+        print(jax.default_backend())
+        print(jax.device_count(), jax.local_device_count())
+        print("8 cores of TPU ( Local devices in Jax ):")
+        print('\n'.join(map(str,jax.local_devices())))
+
+
 
 
 # Taken from https://stackoverflow.com/questions/6027558/flatten-nested-dictionaries-compressing-keys
@@ -118,6 +130,18 @@ def flatten_params(params):
             vals.append(v.ravel())
 
     vals = jnp.concatenate(vals)
+
+    return vals
+
+
+def flatten_jacobian(params, n_out):
+    vals = []
+    for k, v in flatten_dict(params).items():
+        keys = '_'.join(k)
+        if "BatchNorm" not in keys:
+            vals.append(v.reshape(n_out, -1))
+
+    vals = jnp.concatenate(vals, axis=1)
 
     return vals
 

@@ -64,6 +64,9 @@ def create_train_step(model, optimizer, num_classes):
 
         (_, (train_metrics, model_state)), grads = loss_grad_fn(
             state.params, state.model_state)
+        
+        grads = jax.lax.pmean(grads, "device")
+        train_metrics = jax.lax.pmean(train_metrics, "device")
 
         return state.apply_gradients(
             grads=grads, model_state=model_state), train_metrics
@@ -79,6 +82,9 @@ def create_eval_step(model, num_classes):
             train=False)
 
         _, (eval_metrics, _) = loss_fn(state.params, state.model_state)
+        
+        eval_metrics = jax.lax.pmean(eval_metrics, "device")
+
         return eval_metrics
 
     return eval_step
