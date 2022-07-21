@@ -428,3 +428,16 @@ class Keep:
 
   def __call__(self, features: Features) -> Features:
     return {k: v for k, v in features.items() if k in self.keys}
+
+
+# @dataclasses.dataclass
+# class ConvertToTuple:
+#   """Converts a dict containing `image` and `label` keys to tuple.
+#   Attributes:
+#     keys: List of string keys to keep.
+#   """
+
+#   keys: List[str]
+
+#   def __call__(self, features: Features) -> Features:
+#     return tuple([features[k] for k in self.keys])

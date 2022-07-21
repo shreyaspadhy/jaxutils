@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Callable, Iterable, Optional
 
 import jax.numpy as jnp
 import ml_collections
@@ -6,10 +6,13 @@ import optax
 from flax.core.frozen_dict import FrozenDict
 from flax import jax_utils
 from flax.training import train_state
+from flax.jax_utils import unreplicate
+from flax.training.common_utils import shard
 from jax.tree_util import tree_map
 from jaxutils.data.utils import NumpyLoader
 from jaxutils.utils import tree_concatenate
 from functools import partial
+import wandb
 
 
 class TrainState(train_state.TrainState):
@@ -63,12 +66,100 @@ def batchwise_metrics_dict(metrics_dict, batch_size, prefix):
     return new_metrics_dict
 
 
+def train_epoch(
+    train_step_fn: Callable,
+    data_iterator: Iterable,
+    steps_per_epoch: int,
+    num_points: int,
+    state: TrainState, 
+    wandb_run: wandb.run,
+    log_prefix: str,
+    dataset_type: str = "tf"
+    ):
+    assert dataset_type in ["tf", "pytorch"]
+    batch_metrics = []
+    for i in range(steps_per_epoch):
+        batch = next(data_iterator)
+        if dataset_type == "pytorch":
+            batch = shard(batch)
+            # TODO: Find a nicer way to be agnostic to TF vs PyTorch
+        if dataset_type == "tf":    
+            batch = (batch['image'], batch['label'])
+        n_devices, B = batch[0].shape[:2]
+        state, metrics = train_step_fn(state, *batch)
+        
+        # These metrics are summed over each sharded batch, and averaged
+        # over the num_devices. We need to multiply by num_devices to sum
+        # over the entire dataset correctly, and then aggregate.
+        metrics = unreplicate(metrics)
+        batch_metrics.append(metrics)
+        # Further divide by sharded batch size, to get average metrics
+        wandb_run.log(
+            batchwise_metrics_dict(metrics, B, f'{log_prefix}/batchwise'))
+
+    epoch_metrics = aggregated_metrics_dict(
+        batch_metrics, num_points, log_prefix, 
+        n_devices=n_devices)
+    wandb_run.log(epoch_metrics)
+    
+    return state, epoch_metrics
+    
+
+def eval_epoch(
+    eval_step_fn: Callable,
+    data_iterator: Iterable,
+    steps_per_epoch: int,
+    num_points: int,
+    state: TrainState, 
+    wandb_run: wandb.run,
+    log_prefix: str,
+    dataset_type: str = "tf"
+    ):
+    assert dataset_type in ["tf", "pytorch"]
+    batch_metrics = []
+    for i in range(steps_per_epoch):
+        batch = next(data_iterator)
+        if dataset_type == "pytorch":
+            batch = shard(batch)
+            # TODO: Find a nicer way to be agnostic to TF vs PyTorch
+        if dataset_type == "tf":    
+            batch = (batch['image'], batch['label'])
+        
+        n_devices, B = batch[0].shape[:2]
+        metrics = eval_step_fn(state, *batch)
+        
+        # These metrics are summed over each sharded batch, and averaged
+        # over the num_devices. We need to multiply by num_devices to sum
+        # over the entire dataset correctly, and then aggregate.
+        metrics = unreplicate(metrics)
+        batch_metrics.append(metrics)
+        # Further divide by sharded batch size, to get average metrics
+        wandb_run.log(
+            batchwise_metrics_dict(metrics, B, f'{log_prefix}/batchwise'))
+
+    epoch_metrics = aggregated_metrics_dict(
+        batch_metrics, num_points, log_prefix, 
+        n_devices=n_devices)
+    wandb_run.log(epoch_metrics)
+    
+    return epoch_metrics
+    
+    
+def get_dataset_iterator(loader, dataset_type):
+    if dataset_type == "tf":
+        iterator = loader
+    elif dataset_type == "pytorch":
+        iterator = iter(loader)
+    
+    return iterator
+
+
 def get_lr_and_schedule(
         optim_name: str,
         optim_config: ml_collections.ConfigDict,
         lr_schedule_name: Optional[str],
         lr_schedule_config: Optional[ml_collections.ConfigDict],
-        train_loader: Optional[NumpyLoader] = None):
+        steps_per_epoch: int,):
     """Returns an optimizer with (optional lr_schedule)."""
     if lr_schedule_name is not None and lr_schedule_config is not None:
         schedule = getattr(optax, lr_schedule_name)
@@ -84,7 +175,7 @@ def get_lr_and_schedule(
             lr_boundaries_and_scales = {}
             scales_per_epoch = lr_schedule_config.get('scales_per_epoch', None)
             for k, v in scales_per_epoch.items():
-                boundary = int(k) * len(train_loader)
+                boundary = int(k) * steps_per_epoch
                 lr_boundaries_and_scales[boundary] = v
             
             lr_schedule_config.boundaries_and_scales = {

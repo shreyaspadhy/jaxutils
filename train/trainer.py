@@ -11,13 +11,13 @@ from absl import app, flags
 from clu import parameter_overview
 from flax import linen as nn
 from flax.training import checkpoints
-from flax.training.common_utils import get_metrics, shard
+from flax.training.common_utils import shard
 from flax.jax_utils import unreplicate
 from tqdm import trange
 
 import torch
 import wandb
-from jaxutils.data.image import get_image_dataset
+from jaxutils.data.image import get_image_dataset as get_pt_image_dataset
 from jaxutils.data.tf_datasets import get_image_dataset as get_tf_image_dataset
 from jaxutils.data.tf_datasets import get_num_examples, PYTORCH_TO_TF_NAMES
 from jaxutils.data.utils import NumpyLoader
@@ -27,8 +27,11 @@ from jaxutils.train.classification import create_eval_step, create_train_step
 from jaxutils.train.utils import (
     aggregated_metrics_dict,
     batchwise_metrics_dict,
+    get_dataset_iterator,
     get_lr_and_schedule,
-    TrainState
+    TrainState,
+    eval_epoch,
+    train_epoch,
 )
 from jaxutils.utils import (
     flatten_nested_dict,
@@ -95,7 +98,10 @@ def main(config):
             torch.manual_seed(config.get("global_seed", 0))
 
         ################### Load dataset/dataloders ##########################
-        if config.use_pytorch_dataset:
+        batch_size = config.dataset.process_batch_size * jax.process_count()
+        eval_batch_size = config.dataset.eval_process_batch_size * jax.process_count()
+            
+        if config.dataset_type == "pytorch":
             train_dataset, test_dataset, val_dataset = get_pt_image_dataset(
                 dataset_name=config.dataset.dataset_name,
                 data_dir=config.dataset.data_dir,
@@ -105,25 +111,38 @@ def main(config):
                 perform_augmentations=config.dataset.perform_augmentations)
             # Create Dataloaders
             train_loader = NumpyLoader(
-                train_dataset, batch_size=config.batch_size,
+                train_dataset, batch_size=batch_size,
                 shuffle=True, num_workers=config.dataset.num_workers,
                 drop_last=config.use_tpu,)
             test_loader = NumpyLoader(
-            test_dataset, batch_size=config.eval_batch_size,
+            test_dataset, batch_size=eval_batch_size,
             shuffle=False, num_workers=config.dataset.num_workers,
             drop_last=config.use_tpu,)
             if val_dataset is not None:
                 val_loader = NumpyLoader(
-                    val_dataset, batch_size=config.eval_batch_size,
+                    val_dataset, batch_size=eval_batch_size,
                     shuffle=False, num_workers=config.dataset.num_workers,
                     drop_last=config.use_tpu,)
             else:
                 val_loader = None
-        elif config.use_tf_dataset:
+            
+            train_config = {
+                'n_train': len(train_dataset),
+                'n_val': len(val_dataset) if val_dataset is not None else None,
+                'n_test': len(test_dataset),
+                'dataset.batch_size': batch_size,
+                'dataset.eval_batch_size': eval_batch_size,
+                'train_steps_per_epoch': len(train_loader),
+                'val_steps_per_epoch': len(val_loader) if val_loader is not None else None,
+                'test_steps_per_epoch': len(test_loader),}
+            
+            # Add all training dataset hparams back to config_dicts
+            update_config_dict(config, run, train_config)
+        elif config.dataset_type == "tf":
             loaders, num_examples = get_tf_image_dataset(
-                dataset_name=TF_TO_PYTORCH_NAMES[config.dataset.dataset_name],
-                process_batch_size=config.process_batch_size,
-                eval_process_batch_size=config.eval_process_batch_size,
+                dataset_name=PYTORCH_TO_TF_NAMES[config.dataset.dataset_name],
+                process_batch_size=config.dataset.process_batch_size,
+                eval_process_batch_size=config.dataset.eval_process_batch_size,
                 cache=config.dataset.cache,
                 num_epochs=config.n_epochs,
                 repeat_after_batching=config.dataset.repeat_after_batching,
@@ -137,14 +156,24 @@ def main(config):
                 try_gcs=config.dataset.try_gcs,
                 val_percent=config.dataset.val_percent,
                 perform_augmentations=config.dataset.perform_augmentations,
-                rng=datasplit_rng)
+                rng=random.PRNGKey(datasplit_rng))
             
             train_loader, val_loader, test_loader = loaders
-            n_train, n_val, n_train = num_examples
-
-            batch_size = config.batch_size * jax.process_count()
-            steps_per_epoch = n_train // batch_size
-        
+            batch_size = config.dataset.process_batch_size * jax.process_count()
+            eval_batch_size = config.dataset.eval_process_batch_size * jax.process_count()
+            
+            train_config = {
+                'n_train': num_examples[0],
+                'n_val': num_examples[1],
+                'n_test': num_examples[2],
+                'dataset.batch_size': batch_size,
+                'dataset.eval_batch_size': eval_batch_size,
+                'train_steps_per_epoch': num_examples[0] // batch_size,
+                'val_steps_per_epoch': num_examples[1] // eval_batch_size if num_examples[1] is not None else None,
+                'test_steps_per_epoch': num_examples[2] // eval_batch_size,}
+            
+            # Add all training dataset hparams back to config_dicts
+            update_config_dict(config, run, train_config)
         
         # Create and initialise model
         model = LeNetSmall(**config.model.to_dict())
@@ -163,7 +192,7 @@ def main(config):
             config.optim,
             config.get('lr_schedule_name', None),
             config.get('lr_schedule', None),
-            train_loader=train_loader)
+            steps_per_epoch=config.train_steps_per_epoch,)
         config.lock()
         
         # Create train_state to save and load
@@ -172,7 +201,7 @@ def main(config):
                                   tx=optimizer,
                                   model_state=model_state)
 
-        # Load from checkpoint
+        # Load from checkpoint, and append specific model seed
         config.unlock()
         config.checkpoint_dir = config.checkpoint_dir + f'/{seed}'
         config.lock()
@@ -210,9 +239,7 @@ def main(config):
             run,
             model_artifact,
             best_model_artifact,
-            config,
-            train_loader_tf,
-            steps_per_epoch)
+            config,)
 
 
 def train_model(
@@ -225,9 +252,7 @@ def train_model(
     run: wandb.run,
     wandb_artifact: wandb.Artifact,
     best_wandb_artifact: wandb.Artifact,
-    config: ml_collections.ConfigDict,
-    train_loader_tf,
-    steps_per_epoch): 
+    config: ml_collections.ConfigDict,): 
     
     # Create training and evaluation functions
     train_step = create_train_step(model, state.tx,
@@ -246,80 +271,111 @@ def train_model(
     val_losses = []
     epochs = trange(config.n_epochs)
     for epoch in epochs:
-        batch_metrics = []
-        for i in range(14):
-        # for batch in next(train_loader_tf):
-            # batch = shard(batch)
-            batch = next(train_loader_tf)
-            # print(batch)
-            # N_dev, B = batch[0].shape[:2]
-            N_dev, B = batch['image'].shape[:2]
-            state, metrics = p_train_step(state, batch['image'], batch['label'])
-            # These metrics are summed over each sharded batch, and averaged
-            # over the num_devices. We need to multiply by num_devices to sum
-            # over the entire dataset correctly, and then aggregate.
-            metrics = unreplicate(metrics)
-            batch_metrics.append(metrics)
-            # Further divide by sharded batch size, to get average metrics
-            run.log(batchwise_metrics_dict(metrics, B, 'train/batchwise'))
+        # batch_metrics = []
+        # for i in range(14):
+        # # for batch in next(train_loader_tf):
+        #     # batch = shard(batch)
+        #     batch = next(train_loader_tf)
+        #     # print(batch)
+        #     # N_dev, B = batch[0].shape[:2]
+        #     N_dev, B = batch['image'].shape[:2]
+        #     state, metrics = p_train_step(state, batch['image'], batch['label'])
+        #     # These metrics are summed over each sharded batch, and averaged
+        #     # over the num_devices. We need to multiply by num_devices to sum
+        #     # over the entire dataset correctly, and then aggregate.
+        #     metrics = unreplicate(metrics)
+        #     batch_metrics.append(metrics)
+        #     # Further divide by sharded batch size, to get average metrics
+        #     run.log(batchwise_metrics_dict(metrics, B, 'train/batchwise'))
 
-        train_metrics = aggregated_metrics_dict(
-            batch_metrics, len(train_loader.dataset), 'train', n_devices=N_dev)
-        run.log(train_metrics)
-
+        # train_metrics = aggregated_metrics_dict(
+        #     batch_metrics, len(train_loader.dataset), 'train', n_devices=N_dev)
+        # run.log(train_metrics)
+        
+        state, train_metrics = train_epoch(
+            train_step_fn=p_train_step, 
+            data_iterator=get_dataset_iterator(train_loader, config.dataset_type), 
+            steps_per_epoch=config.train_steps_per_epoch, 
+            num_points=config.n_train, 
+            state=state, 
+            wandb_run=run, 
+            log_prefix='train',
+            dataset_type=config.dataset_type)
+        
         epochs.set_postfix(train_metrics)
 
         if epoch % config.wandb.params_log_interval == 0:
-            log_model_params(state.params, run,
+            log_model_params(unreplicate(state).params, run,
                                 param_prefix='params')
-            log_model_params(state.model_state, run,
+            log_model_params(unreplicate(state).model_state, run,
                                 param_prefix='model_state')
 
         # Optionally evaluate on val dataset
         if val_loader is not None:
-            batch_metrics = []
-            for eval_batch in iter(val_loader):
-                eval_batch = shard(eval_batch)
-                N_dev, B = eval_batch[0].shape[:2]
-                metrics = p_eval_step(state, eval_batch[0], eval_batch[1])
-                metrics = unreplicate(metrics)
-                batch_metrics.append(metrics)
-                # Further divide by sharded batch size, to get average metrics
-                run.log(batchwise_metrics_dict(metrics, B, 'val/batchwise'))
+            # batch_metrics = []
+            # for eval_batch in iter(val_loader):
+            #     eval_batch = shard(eval_batch)
+            #     N_dev, B = eval_batch[0].shape[:2]
+            #     metrics = p_eval_step(state, eval_batch[0], eval_batch[1])
+            #     metrics = unreplicate(metrics)
+            #     batch_metrics.append(metrics)
+            #     # Further divide by sharded batch size, to get average metrics
+            #     run.log(batchwise_metrics_dict(metrics, B, 'val/batchwise'))
 
-            val_metrics = aggregated_metrics_dict(
-                batch_metrics, len(val_loader.dataset), 'val', n_devices=N_dev)
-            run.log(val_metrics)
+            # val_metrics = aggregated_metrics_dict(
+            #     batch_metrics, len(val_loader.dataset), 'val', n_devices=N_dev)
+            # run.log(val_metrics)
+            # val_losses.append(val_metrics['val/nll'])
+            
+            val_metrics = eval_epoch(
+                eval_step_fn=p_eval_step, 
+                data_iterator=get_dataset_iterator(val_loader, config.dataset_type),
+                steps_per_epoch=config.val_steps_per_epoch, 
+                num_points=config.n_val, 
+                state=state, 
+                wandb_run=run, 
+                log_prefix='val',
+                dataset_type=config.dataset_type)
+            
             val_losses.append(val_metrics['val/nll'])
 
-            # # Save best validation loss/epoch over training
-            # if val_metrics['val/nll'] <= min(val_losses):
-            #     run.summary['best_val_loss'] = val_metrics['val/nll']
-            #     run.summary['best_epoch'] = epoch
+            # Save best validation loss/epoch over training
+            if val_metrics['val/nll'] <= min(val_losses):
+                run.summary['best_val_loss'] = val_metrics['val/nll']
+                run.summary['best_epoch'] = epoch
 
-            #     checkpoints.save_checkpoint(
-            #         checkpoint_dir / "best", unreplicate(state), epoch+1, keep=1,
-            #         overwrite=True)
+                checkpoints.save_checkpoint(
+                    checkpoint_dir / "best", unreplicate(state), epoch+1, keep=1,
+                    overwrite=True)
 
         # Now eval on test dataset every few intervals if perform_eval=True
         if (epoch + 1) % config.eval_interval == 0 and config.perform_eval:
-            batch_metrics = []
-            for eval_batch in iter(test_loader):
-                eval_batch = shard(eval_batch)
-                N_dev, B = eval_batch[0].shape[:2]
-                metrics = p_eval_step(state, eval_batch[0], eval_batch[1])
-                metrics = unreplicate(metrics)
-                batch_metrics.append(metrics)
-                # Further divide by sharded batch size, to get average metrics
-                run.log(batchwise_metrics_dict(metrics, B, 'test/batchwise'))
+            # batch_metrics = []
+            # for eval_batch in iter(test_loader):
+            #     eval_batch = shard(eval_batch)
+            #     N_dev, B = eval_batch[0].shape[:2]
+            #     metrics = p_eval_step(state, eval_batch[0], eval_batch[1])
+            #     metrics = unreplicate(metrics)
+            #     batch_metrics.append(metrics)
+            #     # Further divide by sharded batch size, to get average metrics
+            #     run.log(batchwise_metrics_dict(metrics, B, 'test/batchwise'))
                 
 
-            test_metrics = aggregated_metrics_dict(
-                batch_metrics, len(test_loader.dataset), 'test', n_devices=N_dev)
-            run.log(test_metrics)
+            # test_metrics = aggregated_metrics_dict(
+            #     batch_metrics, len(test_loader.dataset), 'test', n_devices=N_dev)
+            # run.log(test_metrics)
+            test_metrics = eval_epoch(
+                eval_step_fn=p_eval_step, 
+                data_iterator=get_dataset_iterator(test_loader, config.dataset_type),
+                steps_per_epoch=config.test_steps_per_epoch, 
+                num_points=config.n_test, 
+                state=state, 
+                wandb_run=run, 
+                log_prefix='test',
+                dataset_type=config.dataset_type)
 
         # Save any auxilliary variables to log
-        run.log({'lr': state.opt_state.hyperparams['learning_rate']})
+        run.log({'lr': unreplicate(state).opt_state.hyperparams['learning_rate']})
 
         # Save Model Checkpoints
         if (epoch + 1) % config.save_interval == 0:
