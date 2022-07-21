@@ -24,14 +24,27 @@ def get_config():
     config.dataset.val_percent = 0.1
     config.dataset.perform_augmentations = True
     config.dataset.num_workers = 16
-
+    
+    config.dataset.process_batch_size = 400
+    config.dataset.batch_size = config.dataset.process_batch_size
+    
+    config.dataset.eval_process_batch_size = 2000
+    config.dataset.eval_batch_size = config.dataset.eval_process_batch_size
+    
+    config.dataset.cache = False
+    config.dataset.repeat_after_batching = False
+    config.dataset.shuffle_train_split = True
+    config.dataset.shuffle_eval_split = False
+    config.dataset.shuffle_buffer_size = 10_000
+    config.dataset.prefetch_size = 4
+    config.dataset.prefetch_on_device = None
+    config.dataset.drop_remainder = True
+    config.dataset.try_gcs = True
+    
     # Add METADATA information from jaxutils
     for key in METADATA:
         config.dataset[key] = METADATA[key][config.dataset.dataset_name]
 
-    # Training Configs
-    config.batch_size = 400  # 27000
-    config.eval_batch_size = 2000  # 2000
     config.n_epochs = 90
     config.perform_eval = True
     config.eval_interval = 5
@@ -60,7 +73,7 @@ def get_config():
 
     # Wandb Configs
     config.wandb = ml_collections.ConfigDict()
-    config.wandb.log = True
+    config.wandb.log = False
     config.wandb.load_model = False
     config.wandb.project = "sampled-laplace"
     config.wandb.entity = "cbl-mlg"

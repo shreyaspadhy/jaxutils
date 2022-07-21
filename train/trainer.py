@@ -18,6 +18,8 @@ from tqdm import trange
 import torch
 import wandb
 from jaxutils.data.image import get_image_dataset
+from jaxutils.data.tf_datasets import get_image_dataset as get_tf_image_dataset
+from jaxutils.data.tf_datasets import get_num_examples, PYTORCH_TO_TF_NAMES
 from jaxutils.data.utils import NumpyLoader
 from jaxutils.models.lenets import LeNetSmall
 from jaxutils.models.resnets import ResNetBlock, ResNet
@@ -33,6 +35,7 @@ from jaxutils.utils import (
     generate_keys,
     log_model_params,
     setup_training,
+    update_config_dict
 )
 
 ml_collections.config_flags.DEFINE_config_file(
@@ -92,34 +95,60 @@ def main(config):
             torch.manual_seed(config.get("global_seed", 0))
 
         ################### Load dataset/dataloders ##########################
-        train_dataset, test_dataset, val_dataset = get_image_dataset(
-            dataset_name=config.dataset.dataset_name,
-            data_dir=config.dataset.data_dir,
-            flatten_img=config.dataset.flatten_img,
-            val_percent=config.dataset.val_percent,
-            random_seed=datasplit_rng,
-            perform_augmentations=config.dataset.perform_augmentations)
-        
-        # Create Dataloaders
-        train_loader = NumpyLoader(
-            train_dataset, batch_size=config.batch_size,
-            shuffle=True, num_workers=config.dataset.num_workers,
-            drop_last=config.use_tpu,)
-        test_loader = NumpyLoader(
+        if config.use_pytorch_dataset:
+            train_dataset, test_dataset, val_dataset = get_pt_image_dataset(
+                dataset_name=config.dataset.dataset_name,
+                data_dir=config.dataset.data_dir,
+                flatten_img=config.dataset.flatten_img,
+                val_percent=config.dataset.val_percent,
+                random_seed=datasplit_rng,
+                perform_augmentations=config.dataset.perform_augmentations)
+            # Create Dataloaders
+            train_loader = NumpyLoader(
+                train_dataset, batch_size=config.batch_size,
+                shuffle=True, num_workers=config.dataset.num_workers,
+                drop_last=config.use_tpu,)
+            test_loader = NumpyLoader(
             test_dataset, batch_size=config.eval_batch_size,
             shuffle=False, num_workers=config.dataset.num_workers,
             drop_last=config.use_tpu,)
-        if val_dataset is not None:
-            val_loader = NumpyLoader(
-                val_dataset, batch_size=config.eval_batch_size,
-                shuffle=False, num_workers=config.dataset.num_workers,
-                drop_last=config.use_tpu,)
-        else:
-            val_loader = None
+            if val_dataset is not None:
+                val_loader = NumpyLoader(
+                    val_dataset, batch_size=config.eval_batch_size,
+                    shuffle=False, num_workers=config.dataset.num_workers,
+                    drop_last=config.use_tpu,)
+            else:
+                val_loader = None
+        elif config.use_tf_dataset:
+            loaders, num_examples = get_tf_image_dataset(
+                dataset_name=TF_TO_PYTORCH_NAMES[config.dataset.dataset_name],
+                process_batch_size=config.process_batch_size,
+                eval_process_batch_size=config.eval_process_batch_size,
+                cache=config.dataset.cache,
+                num_epochs=config.n_epochs,
+                repeat_after_batching=config.dataset.repeat_after_batching,
+                shuffle_train_split=config.dataset.shuffle_train_split,
+                shuffle_eval_split=config.dataset.shuffle_eval_split,
+                shuffle_buffer_size=config.dataset.shuffle_buffer_size,
+                prefetch_size=config.dataset.prefetch_size,
+                prefetch_on_device=config.dataset.prefetch_on_device,
+                drop_remainder=config.dataset.drop_remainder,
+                data_dir=config.dataset.data_dir,
+                try_gcs=config.dataset.try_gcs,
+                val_percent=config.dataset.val_percent,
+                perform_augmentations=config.dataset.perform_augmentations,
+                rng=datasplit_rng)
+            
+            train_loader, val_loader, test_loader = loaders
+            n_train, n_val, n_train = num_examples
+
+            batch_size = config.batch_size * jax.process_count()
+            steps_per_epoch = n_train // batch_size
+        
         
         # Create and initialise model
-        # model = LeNetSmall(**config.model.to_dict())
-        model = ResNet(block_cls=ResNetBlock, **config.model.to_dict())
+        model = LeNetSmall(**config.model.to_dict())
+        # model = ResNet(block_cls=ResNetBlock, **config.model.to_dict())
 
         dummy_init = jnp.expand_dims(jnp.ones(config.dataset.image_shape), 0)
         variables = model.init(model_rng, dummy_init)
@@ -181,7 +210,9 @@ def main(config):
             run,
             model_artifact,
             best_model_artifact,
-            config)
+            config,
+            train_loader_tf,
+            steps_per_epoch)
 
 
 def train_model(
@@ -194,7 +225,9 @@ def train_model(
     run: wandb.run,
     wandb_artifact: wandb.Artifact,
     best_wandb_artifact: wandb.Artifact,
-    config: ml_collections.ConfigDict): 
+    config: ml_collections.ConfigDict,
+    train_loader_tf,
+    steps_per_epoch): 
     
     # Create training and evaluation functions
     train_step = create_train_step(model, state.tx,
@@ -214,10 +247,14 @@ def train_model(
     epochs = trange(config.n_epochs)
     for epoch in epochs:
         batch_metrics = []
-        for batch in iter(train_loader):
-            batch = shard(batch)
-            N_dev, B = batch[0].shape[:2]
-            state, metrics = p_train_step(state, batch[0], batch[1])
+        for i in range(14):
+        # for batch in next(train_loader_tf):
+            # batch = shard(batch)
+            batch = next(train_loader_tf)
+            # print(batch)
+            # N_dev, B = batch[0].shape[:2]
+            N_dev, B = batch['image'].shape[:2]
+            state, metrics = p_train_step(state, batch['image'], batch['label'])
             # These metrics are summed over each sharded batch, and averaged
             # over the num_devices. We need to multiply by num_devices to sum
             # over the entire dataset correctly, and then aggregate.

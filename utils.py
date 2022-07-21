@@ -14,6 +14,7 @@ import torch
 from flax.traverse_util import flatten_dict, ModelParamTraversal, unflatten_dict
 
 import wandb
+import ml_collections
 
 
 def setup_training(wandb_run):
@@ -154,3 +155,12 @@ def print_param_shapes(params):
 def print_params(params):
     for k, v in flatten_dict(params).items():
         print(k, v)
+        
+        
+def update_config_dict(config_dict: ml_collections.ConfigDict, 
+                       run, new_vals: dict):
+    config_dict.unlock()
+    config_dict.update_from_flattened_dict(new_vals)
+    run.config.update(new_vals, allow_val_change=True)
+    config_dict.lock()
+    
