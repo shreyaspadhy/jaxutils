@@ -176,14 +176,8 @@ def get_image_dataset(
     dataset_name: str,
     process_batch_size: int,
     eval_process_batch_size: int,
-    cache: Union[str, bool] = False,
-    num_epochs: Optional[int] = None,
-    repeat_after_batching: bool = False,
     shuffle_train_split: bool = True,
     shuffle_eval_split: bool = True,
-    shuffle_buffer_size: int = 10_000,
-    prefetch_size: int = 4,
-    prefetch_on_device: Optional[int] = None,
     drop_remainder: bool = True,
     process_index: Optional[int] = None,
     process_count: Optional[int] = None,
@@ -193,27 +187,15 @@ def get_image_dataset(
     perform_augmentations: bool = True,
     rng: Optional[jnp.ndarray] = None,):
     """Provides Tensorflow `Dataset`s for the specified image dataset_name.
+
      Args:
         dataset_name: the `str` name of the dataset. E.g. `'MNIST'`.
         process_batch_size: Per process batch size.
         eval_process_batch_size: Per process batch size for eval splits.
-        cache: Whether to cache the unprocessed dataset in memory before
-          preprocessing and batching ("loaded"), after preprocessing & batching
-          ("batched"), or not at all (False).
-        num_epochs: Number of epochs for which to repeat the dataset. None to
-          repeat forever.
-        repeat_after_batching: Whether to `repeat` the dataset before or after
-          batching. Repeating after batching maintains the same batches, but
-          shuffled across epochs.
         shuffle_train_split: Whether to shuffle the train dataset (both on file
           & example level).
         shuffle_eval_split: Whether to shuffle the eval datasets.
         shuffle_buffer_size: Number of examples in the shuffle buffer.
-        prefetch_size: The number of elements in the final dataset to prefetch
-          in the background. This should be a small (say <10) positive integer
-          or tf.data.AUTOTUNE.
-        prefetch_on_device: If not None, the number of elements to prefetch with
-          Jax/Flax on device. For CPUs/TPUs, it is advisable to use None.
         drop_remainder: Whether to drop remainders when batching and splitting
           across processes.
         process_index: Integer id in the range [0, process_count) of the current
@@ -237,7 +219,7 @@ def get_image_dataset(
         rng: A jax.random.PRNG key to use for seeding shuffle operations and
           preprocessing ops. Must be set if shuffling.
     Returns:
-        `loaders`: a Tuple of (train_loader, Optional[val_loader], test_loader)
+        `loaders`: a Tuple of (train_dataset, Optional[val_dataset], test_dataset)
         `num_examples`: a Tuple of (train_num_examples, Optional[val_num_examples],
           test_num_examples).
     """
@@ -261,7 +243,7 @@ def get_image_dataset(
     
     if rng_available:
         rng = jax.random.fold_in(rng, process_index)  # Derive RNG for process.
-        # We need 2 rngs - (shuffle_seed, split_rng)
+        # We need 2 rngs - (shuffle_seed, split_augmentation_rng)
         rngs = list(jax.random.split(rng, 2))
     else:
         rngs = 2 * [[None, None]]
@@ -295,13 +277,12 @@ def get_image_dataset(
 
     # We follow the convention that split_num == 0 is train, rest are eval
     for split_num, split in enumerate(ds_splits):
-        print(split)
         # pick either train or eval batch_size, and shuffling behaviour
         split_process_batch_size = process_batch_size if split_num == 0 else eval_process_batch_size
         shuffle = shuffle_train_split if split_num == 0 else shuffle_eval_split
         
         # We need 2 rngs per split - (shuffle_rng, augmentation_rng)
-        rngs = list(jax.random.split(split_rngs[split_num], 2))
+        # rngs = list(jax.random.split(split_rngs[split_num], 2))
         
         # Get the number of examples in the split, before sharding on processes.
         num_examples = get_num_examples(
@@ -318,21 +299,12 @@ def get_image_dataset(
 
         # The split per process is shuffled.
         # TODO: I'm not sure if this changes the train/val split shuffling.
-        print(process_split, shuffle_train_split, read_config)
+        # print(process_split, shuffle_train_split, read_config)
         ds = dataset_builder.as_dataset(
             split=process_split,
-            shuffle_files=shuffle_train_split,
+            shuffle_files=shuffle,
             read_config=read_config,
             decoders={"image": tfds.decode.SkipDecoding()})
-        
-        if cache == "loaded":
-            ds = ds.cache()
-
-        if shuffle:
-            ds = ds.shuffle(shuffle_buffer_size, seed=rngs.pop()[0])
-
-        if not repeat_after_batching:
-            ds = ds.repeat(num_epochs)
 
         pp_split = COMMON_TRANSFORMATIONS[TF_TO_PYTORCH_NAMES[dataset_name]]
         if perform_augmentations and split_num == 0:
@@ -356,66 +328,123 @@ def get_image_dataset(
         # Use RNG to have deterministic augmentations across a specific seed.
         if rng_available:
             ds = preprocess_with_per_example_rng(
-                ds, preprocess_and_mask_fn, rng=rngs.pop())
+                ds, preprocess_and_mask_fn, rng=split_rngs.pop())
         else:
             ds = ds.map(
                 preprocess_and_mask_fn, num_parallel_calls=tf.data.AUTOTUNE)
         
-        # Batch and reshape to [num_devices, batch_size_per_device] with padding.
-        num_devices = jax.local_device_count()
-        batch_size_per_device = split_process_batch_size // num_devices
+        datasets.append(ds)
         
-        if not drop_remainder:
-            # If we're not dropping the remainder, then we append additional zero 
-            # valued examples with zero-valued masks to the dataset such that
-            # batching with drop_remainder=True will yield a dataset whose final
-            # batch is padded as needed.
-            # NOTE: We're batching the dataset over two dimensions,
-            # `batch_size_per_device` and `num_devices`. Therefore, adding
-            # `batch_size_per_device*num_devices - 1` padding examples covers the
-            # worst case of 1 example left over after the first batching application
-            # with batch size `batch_size_per_device` (since we'd need
-            # `batch_size_per_device*num_devices - 1` additional examples).
-            padding_example = tf.nest.map_structure(
-                lambda spec: tf.zeros(spec.shape, spec.dtype)[None], ds.element_spec)
-            padding_example["mask"] = [0.]
-            padding_dataset = tf.data.Dataset.from_tensor_slices(padding_example)
-            ds = ds.concatenate(
-                padding_dataset.repeat(batch_size_per_device * num_devices - 1))
-
-        batch_dims = [num_devices, batch_size_per_device]
-        for batch_size in reversed(batch_dims):
-            ds = ds.batch(batch_size, drop_remainder=True)
-
-        if cache == "batched":
-            ds = ds.cache()
-
-        if repeat_after_batching:
-            ds = ds.repeat(num_epochs)
-
-        ds = ds.prefetch(prefetch_size)
-        
-        iterator = iter(ds)
-
-        def _prepare(x):
-            # Transforms x into read-only numpy array without copy if possible, see:
-            # https://github.com/tensorflow/tensorflow/issues/33254#issuecomment-542379165
-            return np.asarray(memoryview(x))
-
-        iterator = (jax.tree_map(_prepare, xs) for xs in iterator)
-
-        if prefetch_on_device:
-            iterator = flax.jax_utils.prefetch_to_device(
-                iterator, prefetch_on_device, devices=None)
-        
-        datasets.append(iterator)
-    
     if val_percent == 0:
         # Insert None into the list in the middle if no validation splits.
         datasets.insert(1, None)
         split_num_examples.insert(1, None)
         
     return datasets, split_num_examples
+
+
+def get_image_dataloader(
+    dataset: tf.data.Dataset,
+    process_batch_size: int,
+    num_epochs: int,
+    shuffle: bool = False,
+    shuffle_buffer_size: int = 10_000,
+    shuffle_rng: Optional[jax.random.PRNGKey] = None,
+    cache: Union[str, bool] = False,
+    repeat_after_batching: bool = False,
+    drop_remainder: bool = True,
+    prefetch_size: int = 4,
+    prefetch_on_device: Optional[int] = None,):
+    """Return data iterator for a given TensorFlow dataset.
+
+    Args:
+        dataset: tf Dataset object
+        process_batch_size (int):Per process batch size.
+        num_epochs (int): Number of epochs for which to repeat the dataset. None
+          to repeat forever.
+        shuffle: Whether to shuffle the dataset (both on file & example level).
+        shuffle_buffer_size: Number of examples in the shuffle buffer.
+        shuffle_rng: RNG to use for shuffling.
+        cache: Whether to cache the unprocessed dataset in memory before
+          preprocessing and batching ("loaded"), after preprocessing & batching
+          ("batched"), or not at all (False).
+        repeat_after_batching: Whether to `repeat` the dataset before or after
+          batching. Repeating after batching maintains the same batches, but
+          shuffled across epochs.
+        drop_remainder: Whether to drop remainders when batching and splitting
+          across processes.
+        prefetch_size: The number of elements in the final dataset to prefetch
+          in the background. This should be a small (say <10) positive integer
+          or tf.data.AUTOTUNE.
+        prefetch_on_device: If not None, the number of elements to prefetch with
+          Jax/Flax on device. For CPUs/TPUs, it is advisable to use None.
+
+    Raises:
+        ValueError: _description_
+
+    Returns:
+        _type_: _description_
+    """
+    # Batch and reshape to [num_devices, batch_size_per_device] with padding.
+    if cache == "loaded":
+        dataset = dataset.cache()
+
+    if shuffle:
+        if shuffle_rng is None:
+            raise ValueError("shuffle_rng must be provided if shuffle is True.")
+        dataset = dataset.shuffle(shuffle_buffer_size, seed=shuffle_rng[0])
+
+    if not repeat_after_batching:
+        dataset = dataset.repeat(num_epochs)
+        
+    num_devices = jax.local_device_count()
+    batch_size_per_device = process_batch_size // num_devices
+    
+    if not drop_remainder:
+        # If we're not dropping the remainder, then we append additional zero 
+        # valued examples with zero-valued masks to the dataset such that
+        # batching with drop_remainder=True will yield a dataset whose final
+        # batch is padded as needed.
+        # NOTE: We're batching the dataset over two dimensions,
+        # `batch_size_per_device` and `num_devices`. Therefore, adding
+        # `batch_size_per_device*num_devices - 1` padding examples covers the
+        # worst case of 1 example left over after the first batching application
+        # with batch size `batch_size_per_device` (since we'd need
+        # `batch_size_per_device*num_devices - 1` additional examples).
+        padding_example = tf.nest.map_structure(
+            lambda spec: tf.zeros(spec.shape, spec.dtype)[None], dataset.element_spec)
+        padding_example["mask"] = [0.]
+        padding_dataset = tf.data.Dataset.from_tensor_slices(padding_example)
+        dataset = dataset.concatenate(
+            padding_dataset.repeat(batch_size_per_device * num_devices - 1))
+
+    batch_dims = [num_devices, batch_size_per_device]
+    for batch_size in reversed(batch_dims):
+        dataset = dataset.batch(batch_size, drop_remainder=True)
+
+    if cache == "batched":
+        dataset = dataset.cache()
+
+    if repeat_after_batching:
+        dataset = dataset.repeat(num_epochs)
+
+    dataset = dataset.prefetch(prefetch_size)
+    
+    iterator = iter(dataset)
+
+    def _prepare(x):
+        # Transforms x into read-only numpy array without copy if possible, see:
+        # https://github.com/tensorflow/tensorflow/issues/33254#issuecomment-542379165
+        return np.asarray(memoryview(x))
+
+    iterator = (jax.tree_map(_prepare, xs) for xs in iterator)
+
+    if prefetch_on_device:
+        iterator = flax.jax_utils.prefetch_to_device(
+            iterator, prefetch_on_device, devices=None)
+        
+    return iterator
+
 
 
 def get_dataset_splits(

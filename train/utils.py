@@ -74,7 +74,8 @@ def train_epoch(
     state: TrainState, 
     wandb_run: wandb.run,
     log_prefix: str,
-    dataset_type: str = "tf"
+    dataset_type: str = "tf",
+    log_global_metrics: bool = False,
     ):
     assert dataset_type in ["tf", "pytorch"]
     batch_metrics = []
@@ -86,8 +87,12 @@ def train_epoch(
         if dataset_type == "tf":    
             batch = (batch['image'], batch['label'])
         n_devices, B = batch[0].shape[:2]
-        state, metrics = train_step_fn(state, *batch)
         
+        if log_global_metrics:
+            state, metrics, global_metrics = train_step_fn(state, *batch)
+            wandb_run.log(unreplicate(global_metrics))
+        else:
+            state, metrics = train_step_fn(state, *batch)
         # These metrics are summed over each sharded batch, and averaged
         # over the num_devices. We need to multiply by num_devices to sum
         # over the entire dataset correctly, and then aggregate.
@@ -102,7 +107,10 @@ def train_epoch(
         n_devices=n_devices)
     wandb_run.log(epoch_metrics)
     
-    return state, epoch_metrics
+    if log_global_metrics:
+        return state, epoch_metrics, global_metrics
+    else:
+        return state, epoch_metrics
     
 
 def eval_epoch(
@@ -113,7 +121,8 @@ def eval_epoch(
     state: TrainState, 
     wandb_run: wandb.run,
     log_prefix: str,
-    dataset_type: str = "tf"
+    dataset_type: str = "tf",
+    log_global_metrics: bool = False,
     ):
     assert dataset_type in ["tf", "pytorch"]
     batch_metrics = []
@@ -126,8 +135,11 @@ def eval_epoch(
             batch = (batch['image'], batch['label'])
         
         n_devices, B = batch[0].shape[:2]
-        metrics = eval_step_fn(state, *batch)
-        
+        if log_global_metrics:
+            metrics, global_metrics = eval_step_fn(state, *batch)
+            wandb_run.log(unreplicate(global_metrics))
+        else:
+            metrics = eval_step_fn(state, *batch)
         # These metrics are summed over each sharded batch, and averaged
         # over the num_devices. We need to multiply by num_devices to sum
         # over the entire dataset correctly, and then aggregate.
@@ -142,24 +154,18 @@ def eval_epoch(
         n_devices=n_devices)
     wandb_run.log(epoch_metrics)
     
-    return epoch_metrics
+    if log_global_metrics:
+        return epoch_metrics, global_metrics
+    else:
+        return epoch_metrics
     
-    
-def get_dataset_iterator(loader, dataset_type):
-    if dataset_type == "tf":
-        iterator = loader
-    elif dataset_type == "pytorch":
-        iterator = iter(loader)
-    
-    return iterator
-
 
 def get_lr_and_schedule(
         optim_name: str,
         optim_config: ml_collections.ConfigDict,
         lr_schedule_name: Optional[str],
         lr_schedule_config: Optional[ml_collections.ConfigDict],
-        steps_per_epoch: int,):
+        steps_per_epoch: Optional[int] = None,):
     """Returns an optimizer with (optional lr_schedule)."""
     if lr_schedule_name is not None and lr_schedule_config is not None:
         schedule = getattr(optax, lr_schedule_name)
@@ -202,8 +208,11 @@ def get_lr_and_schedule(
 
     optimizer = getattr(optax, optim_name)
     optimizer = optax.inject_hyperparams(optimizer)
-    optimizer = partial(optimizer, learning_rate=lr)
+
     if optim_config.get("weight_decay", None) is not None:
-        optimizer = optimizer(weight_decay=optim_config.weight_decay)
+        optimizer = optimizer(learning_rate=lr,
+                              weight_decay=optim_config.weight_decay)
+    else:
+        optimizer = optimizer(learning_rate=lr)
 
     return optimizer

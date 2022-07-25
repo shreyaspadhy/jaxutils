@@ -18,11 +18,11 @@ def get_config():
 
     # Dataset Configs
     config.dataset_type = "pytorch"
-    
+
     config.dataset = ml_collections.ConfigDict()
     config.dataset.dataset_name = "MNIST"
-    config.dataset.data_dir = "/home/shreyaspadhy_gmail_com/raw_data"
-    # config.dataset.data_dir = None
+    # config.dataset.data_dir = "/home/shreyaspadhy_gmail_com/raw_data"
+    config.dataset.data_dir = None
     config.dataset.flatten_img = False
     config.dataset.val_percent = 0.0
     config.dataset.perform_augmentations = True
@@ -76,7 +76,7 @@ def get_config():
 
     # Wandb Configs
     config.wandb = ml_collections.ConfigDict()
-    config.wandb.log = True
+    config.wandb.log = False
     config.wandb.load_model = False
     config.wandb.project = "sampled-laplace"
     config.wandb.entity = "cbl-mlg"

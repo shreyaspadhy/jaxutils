@@ -19,7 +19,7 @@ import torch
 import wandb
 from jaxutils.data.image import get_image_dataset as get_pt_image_dataset
 from jaxutils.data.tf_datasets import get_image_dataset as get_tf_image_dataset
-from jaxutils.data.tf_datasets import get_num_examples, PYTORCH_TO_TF_NAMES
+from jaxutils.data.tf_datasets import get_image_dataloader, get_num_examples, PYTORCH_TO_TF_NAMES
 from jaxutils.data.utils import NumpyLoader
 from jaxutils.models.lenets import LeNetSmall
 from jaxutils.models.resnets import ResNetBlock, ResNet
@@ -135,22 +135,16 @@ def main(config):
                 'train_steps_per_epoch': len(train_loader),
                 'val_steps_per_epoch': len(val_loader) if val_loader is not None else None,
                 'test_steps_per_epoch': len(test_loader),}
-            
+
             # Add all training dataset hparams back to config_dicts
             update_config_dict(config, run, train_config)
         elif config.dataset_type == "tf":
-            loaders, num_examples = get_tf_image_dataset(
+            datasets, num_examples = get_tf_image_dataset(
                 dataset_name=PYTORCH_TO_TF_NAMES[config.dataset.dataset_name],
                 process_batch_size=config.dataset.process_batch_size,
                 eval_process_batch_size=config.dataset.eval_process_batch_size,
-                cache=config.dataset.cache,
-                num_epochs=config.n_epochs,
-                repeat_after_batching=config.dataset.repeat_after_batching,
                 shuffle_train_split=config.dataset.shuffle_train_split,
                 shuffle_eval_split=config.dataset.shuffle_eval_split,
-                shuffle_buffer_size=config.dataset.shuffle_buffer_size,
-                prefetch_size=config.dataset.prefetch_size,
-                prefetch_on_device=config.dataset.prefetch_on_device,
                 drop_remainder=config.dataset.drop_remainder,
                 data_dir=config.dataset.data_dir,
                 try_gcs=config.dataset.try_gcs,
@@ -158,10 +152,46 @@ def main(config):
                 perform_augmentations=config.dataset.perform_augmentations,
                 rng=random.PRNGKey(datasplit_rng))
             
-            train_loader, val_loader, test_loader = loaders
-            batch_size = config.dataset.process_batch_size * jax.process_count()
-            eval_batch_size = config.dataset.eval_process_batch_size * jax.process_count()
-            
+            train_dataset, val_dataset, test_dataset = datasets
+            # Create Dataloaders
+            train_loader = get_image_dataloader(
+                train_dataset, 
+                process_batch_size=config.dataset.process_batch_size, 
+                num_epochs=config.n_epochs,
+                shuffle=config.dataset.shuffle_train_split,
+                shuffle_buffer_size=config.dataset.shuffle_buffer_size,
+                shuffle_rng=rng,
+                cache=config.dataset.cache,
+                repeat_after_batching=config.dataset.repeat_after_batching,
+                drop_remainder=config.dataset.drop_remainder,
+                prefetch_size=config.dataset.prefetch_size,
+                prefetch_on_device=config.dataset.prefetch_on_device,)
+            test_loader = get_image_dataloader(
+                test_dataset, 
+                process_batch_size=config.dataset.eval_process_batch_size, 
+                num_epochs=config.n_epochs,
+                shuffle=config.dataset.shuffle_eval_split,
+                shuffle_buffer_size=config.dataset.shuffle_buffer_size,
+                cache=config.dataset.cache,
+                repeat_after_batching=config.dataset.repeat_after_batching,
+                drop_remainder=config.dataset.drop_remainder,
+                prefetch_size=config.dataset.prefetch_size,
+                prefetch_on_device=config.dataset.prefetch_on_device,)
+            if val_dataset is not None:
+                val_loader = get_image_dataloader(
+                    val_dataset, 
+                    process_batch_size=config.dataset.eval_process_batch_size, 
+                    num_epochs=config.n_epochs,
+                    shuffle=config.dataset.shuffle_eval_split,
+                    shuffle_buffer_size=config.dataset.shuffle_buffer_size,
+                    cache=config.dataset.cache,
+                    repeat_after_batching=config.dataset.repeat_after_batching,
+                    drop_remainder=config.dataset.drop_remainder,
+                    prefetch_size=config.dataset.prefetch_size,
+                    prefetch_on_device=config.dataset.prefetch_on_device,)
+            else:
+                val_loader = None
+                
             train_config = {
                 'n_train': num_examples[0],
                 'n_val': num_examples[1],
@@ -171,7 +201,7 @@ def main(config):
                 'train_steps_per_epoch': num_examples[0] // batch_size,
                 'val_steps_per_epoch': num_examples[1] // eval_batch_size if num_examples[1] is not None else None,
                 'test_steps_per_epoch': num_examples[2] // eval_batch_size,}
-            
+
             # Add all training dataset hparams back to config_dicts
             update_config_dict(config, run, train_config)
         
@@ -270,28 +300,7 @@ def train_model(
     # Perform Training
     val_losses = []
     epochs = trange(config.n_epochs)
-    for epoch in epochs:
-        # batch_metrics = []
-        # for i in range(14):
-        # # for batch in next(train_loader_tf):
-        #     # batch = shard(batch)
-        #     batch = next(train_loader_tf)
-        #     # print(batch)
-        #     # N_dev, B = batch[0].shape[:2]
-        #     N_dev, B = batch['image'].shape[:2]
-        #     state, metrics = p_train_step(state, batch['image'], batch['label'])
-        #     # These metrics are summed over each sharded batch, and averaged
-        #     # over the num_devices. We need to multiply by num_devices to sum
-        #     # over the entire dataset correctly, and then aggregate.
-        #     metrics = unreplicate(metrics)
-        #     batch_metrics.append(metrics)
-        #     # Further divide by sharded batch size, to get average metrics
-        #     run.log(batchwise_metrics_dict(metrics, B, 'train/batchwise'))
-
-        # train_metrics = aggregated_metrics_dict(
-        #     batch_metrics, len(train_loader.dataset), 'train', n_devices=N_dev)
-        # run.log(train_metrics)
-        
+    for epoch in epochs:        
         state, train_metrics = train_epoch(
             train_step_fn=p_train_step, 
             data_iterator=get_dataset_iterator(train_loader, config.dataset_type), 
@@ -312,21 +321,6 @@ def train_model(
 
         # Optionally evaluate on val dataset
         if val_loader is not None:
-            # batch_metrics = []
-            # for eval_batch in iter(val_loader):
-            #     eval_batch = shard(eval_batch)
-            #     N_dev, B = eval_batch[0].shape[:2]
-            #     metrics = p_eval_step(state, eval_batch[0], eval_batch[1])
-            #     metrics = unreplicate(metrics)
-            #     batch_metrics.append(metrics)
-            #     # Further divide by sharded batch size, to get average metrics
-            #     run.log(batchwise_metrics_dict(metrics, B, 'val/batchwise'))
-
-            # val_metrics = aggregated_metrics_dict(
-            #     batch_metrics, len(val_loader.dataset), 'val', n_devices=N_dev)
-            # run.log(val_metrics)
-            # val_losses.append(val_metrics['val/nll'])
-            
             val_metrics = eval_epoch(
                 eval_step_fn=p_eval_step, 
                 data_iterator=get_dataset_iterator(val_loader, config.dataset_type),
@@ -350,20 +344,6 @@ def train_model(
 
         # Now eval on test dataset every few intervals if perform_eval=True
         if (epoch + 1) % config.eval_interval == 0 and config.perform_eval:
-            # batch_metrics = []
-            # for eval_batch in iter(test_loader):
-            #     eval_batch = shard(eval_batch)
-            #     N_dev, B = eval_batch[0].shape[:2]
-            #     metrics = p_eval_step(state, eval_batch[0], eval_batch[1])
-            #     metrics = unreplicate(metrics)
-            #     batch_metrics.append(metrics)
-            #     # Further divide by sharded batch size, to get average metrics
-            #     run.log(batchwise_metrics_dict(metrics, B, 'test/batchwise'))
-                
-
-            # test_metrics = aggregated_metrics_dict(
-            #     batch_metrics, len(test_loader.dataset), 'test', n_devices=N_dev)
-            # run.log(test_metrics)
             test_metrics = eval_epoch(
                 eval_step_fn=p_eval_step, 
                 data_iterator=get_dataset_iterator(test_loader, config.dataset_type),

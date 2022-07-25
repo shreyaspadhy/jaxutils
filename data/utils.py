@@ -3,8 +3,10 @@ Taken from: colab.research.google.com/github/google/jax/blob/main/docs/notebooks
 """
 import numpy as np
 from torch.utils import data
+from flax.training.common_utils import shard
+from typing import Iterator
 
-
+from typing import Optional
 def _numpy_collate(batch):
     if isinstance(batch[0], np.ndarray):
         return np.stack(batch)
@@ -47,3 +49,30 @@ class NumpyLoader(data.DataLoader):
             worker_init_fn=worker_init_fn,
             generator=generator,
         )
+
+
+def get_agnostic_batch(
+    batch: np.ndarray, 
+    dataset_type: str,
+    tfds_keys: Optional[list] = None) -> np.ndarray:
+    if dataset_type == "pytorch":
+        batch = shard(batch)
+        # TODO: Find a nicer way to be agnostic to TF vs PyTorch
+    if dataset_type == "tf":
+        if tfds_keys is None:
+            tfds_keys = ["image", "label"]
+        batch = tuple([batch[k] for k in tfds_keys])
+        # batch = (batch['image'], batch['label'])
+
+    return batch
+
+
+def get_agnostic_iterator(iterator: Iterator, dataset_type: str) -> Iterator:
+    if dataset_type == "tf":
+        iterator = loader
+    elif dataset_type == "pytorch":
+        iterator = iter(loader)
+    
+    return iterator
+
+        
