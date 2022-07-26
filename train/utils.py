@@ -9,10 +9,13 @@ from flax.training import train_state
 from flax.jax_utils import unreplicate
 from flax.training.common_utils import shard
 from jax.tree_util import tree_map
-from jaxutils.data.utils import NumpyLoader
+from jaxutils.data.utils import NumpyLoader, get_agnostic_batch
 from jaxutils.utils import tree_concatenate
 from functools import partial
 import wandb
+from itertools import islice
+from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 
 class TrainState(train_state.TrainState):
@@ -76,18 +79,15 @@ def train_epoch(
     log_prefix: str,
     dataset_type: str = "tf",
     log_global_metrics: bool = False,
+    epoch=0,
     ):
     assert dataset_type in ["tf", "pytorch"]
     batch_metrics = []
     for i in range(steps_per_epoch):
         batch = next(data_iterator)
-        if dataset_type == "pytorch":
-            batch = shard(batch)
-            # TODO: Find a nicer way to be agnostic to TF vs PyTorch
-        if dataset_type == "tf":    
-            batch = (batch['image'], batch['label'])
+        batch = get_agnostic_batch(batch, dataset_type)
         n_devices, B = batch[0].shape[:2]
-        
+
         if log_global_metrics:
             state, metrics, global_metrics = train_step_fn(state, *batch)
             wandb_run.log(unreplicate(global_metrics))
@@ -106,7 +106,7 @@ def train_epoch(
         batch_metrics, num_points, log_prefix, 
         n_devices=n_devices)
     wandb_run.log(epoch_metrics)
-    
+        
     if log_global_metrics:
         return state, epoch_metrics, global_metrics
     else:
@@ -128,13 +128,9 @@ def eval_epoch(
     batch_metrics = []
     for i in range(steps_per_epoch):
         batch = next(data_iterator)
-        if dataset_type == "pytorch":
-            batch = shard(batch)
-            # TODO: Find a nicer way to be agnostic to TF vs PyTorch
-        if dataset_type == "tf":    
-            batch = (batch['image'], batch['label'])
-        
+        batch = get_agnostic_batch(batch, dataset_type)
         n_devices, B = batch[0].shape[:2]
+
         if log_global_metrics:
             metrics, global_metrics = eval_step_fn(state, *batch)
             wandb_run.log(unreplicate(global_metrics))

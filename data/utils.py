@@ -69,9 +69,9 @@ def get_agnostic_batch(
 
 def get_agnostic_iterator(iterator: Iterator, dataset_type: str) -> Iterator:
     if dataset_type == "tf":
-        iterator = loader
+        iterator = iterator
     elif dataset_type == "pytorch":
-        iterator = iter(loader)
+        iterator = iter(iterator)
     
     return iterator
 

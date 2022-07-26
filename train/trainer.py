@@ -20,14 +20,13 @@ import wandb
 from jaxutils.data.image import get_image_dataset as get_pt_image_dataset
 from jaxutils.data.tf_datasets import get_image_dataset as get_tf_image_dataset
 from jaxutils.data.tf_datasets import get_image_dataloader, get_num_examples, PYTORCH_TO_TF_NAMES
-from jaxutils.data.utils import NumpyLoader
+from jaxutils.data.utils import NumpyLoader, get_agnostic_iterator
 from jaxutils.models.lenets import LeNetSmall
 from jaxutils.models.resnets import ResNetBlock, ResNet
 from jaxutils.train.classification import create_eval_step, create_train_step
 from jaxutils.train.utils import (
     aggregated_metrics_dict,
     batchwise_metrics_dict,
-    get_dataset_iterator,
     get_lr_and_schedule,
     TrainState,
     eval_epoch,
@@ -64,26 +63,12 @@ def main(config):
         config.unlock()
         config.update_from_flattened_dict(run.config)
         # Add hparams that need to be computed from sweeped hparams to configs
-        # computed_configs = {
-        #     'model.n_out': config.dataset.num_classes,
-        # }
-        # config.update_from_flattened_dict(computed_configs)
-        # run.config.update(computed_configs, allow_val_change=True)
+        computed_configs = {}
+        update_config_dict(config, run, computed_configs)
         config.lock()
 
         # Setup training flags and log to Wandb
         setup_training(run)
-        
-        ####################### Setup logging ###############################
-        # Make one log on every process with the configuration for debugging.
-        logging.basicConfig(
-            format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
-            datefmt="%m/%d/%Y %H:%M:%S",
-            level=logging.INFO,
-        )
-        # Setup logging, we only want one process per machine to log things.
-        logger.setLevel(
-            logging.INFO if jax.process_index() == 0 else logging.ERROR)
 
         ######################## Set up random seeds #########################
         if config.use_split_global_seed:
@@ -92,15 +77,22 @@ def main(config):
             torch.manual_seed(seed)
         else:
             seed = config.get("global_seed", 0)
-            rng = random.PRNGKey(seed)
+            torch.manual_seed(config.get("global_seed", 0))
+            global_rng = random.PRNGKey(seed)
             model_rng = random.PRNGKey(config.model_seed)
             datasplit_rng = config.datasplit_seed
-            torch.manual_seed(config.get("global_seed", 0))
 
         ################### Load dataset/dataloders ##########################
+        # NOTE: On a single TPU v3 pod, we have 1 process, 8 devices
         batch_size = config.dataset.process_batch_size * jax.process_count()
         eval_batch_size = config.dataset.eval_process_batch_size * jax.process_count()
-            
+        
+        if (batch_size % jax.device_count() != 0 or
+            eval_batch_size % jax.device_count() != 0):
+            raise ValueError(
+                f'Batch sizes ({batch_size} and {eval_batch_size}) must '
+                f'be divisible by device number ({jax.device_count()})')
+        
         if config.dataset_type == "pytorch":
             train_dataset, test_dataset, val_dataset = get_pt_image_dataset(
                 dataset_name=config.dataset.dataset_name,
@@ -149,46 +141,57 @@ def main(config):
                 data_dir=config.dataset.data_dir,
                 try_gcs=config.dataset.try_gcs,
                 val_percent=config.dataset.val_percent,
-                perform_augmentations=config.dataset.perform_augmentations,
-                rng=random.PRNGKey(datasplit_rng))
+                datasplit_rng=random.PRNGKey(datasplit_rng))
             
             train_dataset, val_dataset, test_dataset = datasets
+            shuffle_rng, global_rng = random.split(global_rng, 2)
+            shuffle_rngs = random.split(shuffle_rng, 3)
+            
+            print(shuffle_rngs)
             # Create Dataloaders
             train_loader = get_image_dataloader(
-                train_dataset, 
+                train_dataset,
+                dataset_name=config.dataset.dataset_name,
                 process_batch_size=config.dataset.process_batch_size, 
                 num_epochs=config.n_epochs,
                 shuffle=config.dataset.shuffle_train_split,
                 shuffle_buffer_size=config.dataset.shuffle_buffer_size,
-                shuffle_rng=rng,
+                rng=shuffle_rngs[0],
                 cache=config.dataset.cache,
                 repeat_after_batching=config.dataset.repeat_after_batching,
                 drop_remainder=config.dataset.drop_remainder,
                 prefetch_size=config.dataset.prefetch_size,
-                prefetch_on_device=config.dataset.prefetch_on_device,)
+                prefetch_on_device=config.dataset.prefetch_on_device,
+                perform_augmentations=config.dataset.perform_augmentations,)
             test_loader = get_image_dataloader(
                 test_dataset, 
+                dataset_name=config.dataset.dataset_name,
                 process_batch_size=config.dataset.eval_process_batch_size, 
                 num_epochs=config.n_epochs,
                 shuffle=config.dataset.shuffle_eval_split,
                 shuffle_buffer_size=config.dataset.shuffle_buffer_size,
+                rng=shuffle_rngs[1],
                 cache=config.dataset.cache,
                 repeat_after_batching=config.dataset.repeat_after_batching,
                 drop_remainder=config.dataset.drop_remainder,
                 prefetch_size=config.dataset.prefetch_size,
-                prefetch_on_device=config.dataset.prefetch_on_device,)
+                prefetch_on_device=config.dataset.prefetch_on_device,
+                perform_augmentations=False)
             if val_dataset is not None:
                 val_loader = get_image_dataloader(
                     val_dataset, 
+                    dataset_name=config.dataset.dataset_name,
                     process_batch_size=config.dataset.eval_process_batch_size, 
                     num_epochs=config.n_epochs,
                     shuffle=config.dataset.shuffle_eval_split,
                     shuffle_buffer_size=config.dataset.shuffle_buffer_size,
+                    rng=shuffle_rngs[2],
                     cache=config.dataset.cache,
                     repeat_after_batching=config.dataset.repeat_after_batching,
                     drop_remainder=config.dataset.drop_remainder,
                     prefetch_size=config.dataset.prefetch_size,
-                    prefetch_on_device=config.dataset.prefetch_on_device,)
+                    prefetch_on_device=config.dataset.prefetch_on_device,
+                    perform_augmentations=False)
             else:
                 val_loader = None
                 
@@ -300,16 +303,17 @@ def train_model(
     # Perform Training
     val_losses = []
     epochs = trange(config.n_epochs)
-    for epoch in epochs:        
+    for epoch in epochs:
         state, train_metrics = train_epoch(
             train_step_fn=p_train_step, 
-            data_iterator=get_dataset_iterator(train_loader, config.dataset_type), 
+            data_iterator=get_agnostic_iterator(train_loader, config.dataset_type), 
             steps_per_epoch=config.train_steps_per_epoch, 
             num_points=config.n_train, 
             state=state, 
             wandb_run=run, 
             log_prefix='train',
-            dataset_type=config.dataset_type)
+            dataset_type=config.dataset_type,
+            epoch=epochs)
         
         epochs.set_postfix(train_metrics)
 
@@ -323,7 +327,7 @@ def train_model(
         if val_loader is not None:
             val_metrics = eval_epoch(
                 eval_step_fn=p_eval_step, 
-                data_iterator=get_dataset_iterator(val_loader, config.dataset_type),
+                data_iterator=get_agnostic_iterator(val_loader, config.dataset_type),
                 steps_per_epoch=config.val_steps_per_epoch, 
                 num_points=config.n_val, 
                 state=state, 
@@ -346,7 +350,7 @@ def train_model(
         if (epoch + 1) % config.eval_interval == 0 and config.perform_eval:
             test_metrics = eval_epoch(
                 eval_step_fn=p_eval_step, 
-                data_iterator=get_dataset_iterator(test_loader, config.dataset_type),
+                data_iterator=get_agnostic_iterator(test_loader, config.dataset_type),
                 steps_per_epoch=config.test_steps_per_epoch, 
                 num_points=config.n_test, 
                 state=state, 

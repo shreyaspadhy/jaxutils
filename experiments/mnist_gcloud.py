@@ -17,21 +17,26 @@ def get_config():
     config.use_split_global_seed = False
 
     # Dataset Configs
-    config.dataset_type = "pytorch"
+    config.dataset_type = "tf"
 
     config.dataset = ml_collections.ConfigDict()
     config.dataset.dataset_name = "MNIST"
-    # config.dataset.data_dir = "/home/shreyaspadhy_gmail_com/raw_data"
-    config.dataset.data_dir = None
+    
+    config.dataset.try_gcs = True
+    if config.dataset_type == "tf" and config.dataset.try_gcs:
+        config.dataset.data_dir = None
+    else:
+        config.dataset.data_dir = "/home/shreyaspadhy_gmail_com/raw_data"
+
     config.dataset.flatten_img = False
     config.dataset.val_percent = 0.0
     config.dataset.perform_augmentations = True
     config.dataset.num_workers = 16
     
-    config.dataset.process_batch_size = 400
+    config.dataset.process_batch_size = 200
     config.dataset.batch_size = config.dataset.process_batch_size
     
-    config.dataset.eval_process_batch_size = 2000
+    config.dataset.eval_process_batch_size = 2000  # 10000/125
     config.dataset.eval_batch_size = config.dataset.eval_process_batch_size
     
     config.dataset.cache = False
@@ -42,7 +47,6 @@ def get_config():
     config.dataset.prefetch_size = 4
     config.dataset.prefetch_on_device = None
     config.dataset.drop_remainder = True
-    config.dataset.try_gcs = True
     
     # Add METADATA information from jaxutils
     for key in METADATA:
@@ -76,7 +80,7 @@ def get_config():
 
     # Wandb Configs
     config.wandb = ml_collections.ConfigDict()
-    config.wandb.log = False
+    config.wandb.log = True
     config.wandb.load_model = False
     config.wandb.project = "sampled-laplace"
     config.wandb.entity = "cbl-mlg"

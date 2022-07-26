@@ -22,13 +22,13 @@ Tensor = Union[tf.Tensor, tf.SparseTensor, tf.RaggedTensor]
 Features = Dict[str, Tensor]
 
 TRAIN_TRANSFORMATIONS = {
-    'MNIST': 'random_crop_with_pad(28, 2)'}
+    'MNIST': 'random_crop_with_pad(28, 2)|value_range(0, 1)|normalize((0.1307,), (0.3081,))'}
 
 TEST_TRANSFORMATIONS = {
-    'MNIST': None}
+    'MNIST': 'value_range(0, 1)|normalize((0.1307,), (0.3081,))'}
 
 COMMON_TRANSFORMATIONS = {
-    'MNIST': 'decode(1)|value_range(0, 1)|normalize((0.1307,), (0.3081,))'}
+    'MNIST': 'decode(1)'}
 
 TF_TO_PYTORCH_NAMES = {
     'mnist': 'MNIST'}
@@ -185,7 +185,7 @@ def get_image_dataset(
     try_gcs: bool = False,
     val_percent: float = 0.1,
     perform_augmentations: bool = True,
-    rng: Optional[jnp.ndarray] = None,):
+    datasplit_rng: Optional[jnp.ndarray] = None,):
     """Provides Tensorflow `Dataset`s for the specified image dataset_name.
 
      Args:
@@ -216,8 +216,8 @@ def get_image_dataset(
           is split and returned as val. (Default: `0.1`)
         perform_augmentations: a `bool` indicating whether to apply random
           transformations to the training data. (Default: `True`)
-        rng: A jax.random.PRNG key to use for seeding shuffle operations and
-          preprocessing ops. Must be set if shuffling.
+        datasplit_rng: A jax.random.PRNG key to use for seeding shuffle
+          operations and preprocessing ops. Must be set if getting val_split.
     Returns:
         `loaders`: a Tuple of (train_dataset, Optional[val_dataset], test_dataset)
         `num_examples`: a Tuple of (train_num_examples, Optional[val_num_examples],
@@ -237,16 +237,15 @@ def get_image_dataset(
     if process_count is None:
         process_count = jax.process_count()
     
-    rng_available = rng is not None
+    rng_available = datasplit_rng is not None
     if not rng_available and (shuffle_train_split or shuffle_eval_split):
         raise ValueError("Please set 'rng' when shuffling.")
     
     if rng_available:
-        rng = jax.random.fold_in(rng, process_index)  # Derive RNG for process.
-        # We need 2 rngs - (shuffle_seed, split_augmentation_rng)
-        rngs = list(jax.random.split(rng, 2))
+        # We need 1 rng for the shuffle_seed.
+        rng = jax.random.fold_in(datasplit_rng, process_index)  # Derive RNG for process.
     else:
-        rngs = 2 * [[None, None]]
+        rng1 = [None, None]
 
     dataset_builder = get_dataset_builder(
         dataset_name, try_gcs=try_gcs, data_dir=data_dir)
@@ -261,16 +260,13 @@ def get_image_dataset(
     # the split between train and val (if there is one).
     # TODO: I'm not sure this changes the train/val split shuffling.
     read_config = tfds.ReadConfig(
-      shuffle_seed=rngs.pop()[0], options=dataset_options)
-    
+      shuffle_seed=rng[0], options=dataset_options)
+
     # Create train, test, and optional val split strings. If val_percent is not
     # 0 and a validation split does not exist for dataset, we return the split
     # as `train[:x%]`, `train[x:%]` and `test`. 
     ds_splits = get_dataset_splits(dataset_builder, val_percent=val_percent)
     num_splits = len(ds_splits)
-    
-    # Divide the rng to be different per split.
-    split_rngs = list(jax.random.split(rngs.pop(), num_splits))
 
     datasets = []
     split_num_examples = []
@@ -281,9 +277,6 @@ def get_image_dataset(
         split_process_batch_size = process_batch_size if split_num == 0 else eval_process_batch_size
         shuffle = shuffle_train_split if split_num == 0 else shuffle_eval_split
         
-        # We need 2 rngs per split - (shuffle_rng, augmentation_rng)
-        # rngs = list(jax.random.split(split_rngs[split_num], 2))
-        
         # Get the number of examples in the split, before sharding on processes.
         num_examples = get_num_examples(
             dataset_builder, split, split_process_batch_size,
@@ -292,10 +285,10 @@ def get_image_dataset(
 
         # Further divide the split per process.
         process_split = get_process_split(
-        split=split,
-        process_index=process_index,
-        process_count=process_count,
-        drop_remainder=drop_remainder)
+            split=split,
+            process_index=process_index,
+            process_count=process_count,
+            drop_remainder=drop_remainder)
 
         # The split per process is shuffled.
         # TODO: I'm not sure if this changes the train/val split shuffling.
@@ -305,34 +298,7 @@ def get_image_dataset(
             shuffle_files=shuffle,
             read_config=read_config,
             decoders={"image": tfds.decode.SkipDecoding()})
-
-        pp_split = COMMON_TRANSFORMATIONS[TF_TO_PYTORCH_NAMES[dataset_name]]
-        if perform_augmentations and split_num == 0:
-            add_pp = TRAIN_TRANSFORMATIONS[TF_TO_PYTORCH_NAMES[dataset_name]]
-            pp_split = pp_split + '|' + add_pp
-        else:
-            add_pp = TEST_TRANSFORMATIONS[TF_TO_PYTORCH_NAMES[dataset_name]]
-            if add_pp is not None:
-                pp_split = pp_split + '|' + add_pp
-
-        # Define Preprocessing Functions for the Datasets using clu.
-        preprocess_fn = preprocess_spec.parse(
-            spec=pp_split, available_ops=tf_preprocess.all_ops())
-        
-        mask_fn = lambda ex: dict(mask=1., **ex)
-        if preprocess_fn is not None:
-            preprocess_and_mask_fn = lambda ex: mask_fn(preprocess_fn(ex))
-        else:
-            preprocess_and_mask_fn = mask_fn
-
-        # Use RNG to have deterministic augmentations across a specific seed.
-        if rng_available:
-            ds = preprocess_with_per_example_rng(
-                ds, preprocess_and_mask_fn, rng=split_rngs.pop())
-        else:
-            ds = ds.map(
-                preprocess_and_mask_fn, num_parallel_calls=tf.data.AUTOTUNE)
-        
+    
         datasets.append(ds)
         
     if val_percent == 0:
@@ -345,16 +311,18 @@ def get_image_dataset(
 
 def get_image_dataloader(
     dataset: tf.data.Dataset,
+    dataset_name: str,
     process_batch_size: int,
     num_epochs: int,
     shuffle: bool = False,
     shuffle_buffer_size: int = 10_000,
-    shuffle_rng: Optional[jax.random.PRNGKey] = None,
+    rng: Optional[jax.random.PRNGKey] = None,
     cache: Union[str, bool] = False,
     repeat_after_batching: bool = False,
     drop_remainder: bool = True,
     prefetch_size: int = 4,
-    prefetch_on_device: Optional[int] = None,):
+    prefetch_on_device: Optional[int] = None,
+    perform_augmentations: bool = False,):
     """Return data iterator for a given TensorFlow dataset.
 
     Args:
@@ -385,18 +353,46 @@ def get_image_dataloader(
     Returns:
         _type_: _description_
     """
+    if (shuffle or perform_augmentations) and rng is None:
+        raise ValueError(
+            "Please set 'rng' when shuffling or performing augmentations.")
+    
+    if rng is not None:
+        shuffle_rng, augment_rng = jax.random.split(rng, 2)
+
     # Batch and reshape to [num_devices, batch_size_per_device] with padding.
     if cache == "loaded":
         dataset = dataset.cache()
 
     if shuffle:
-        if shuffle_rng is None:
-            raise ValueError("shuffle_rng must be provided if shuffle is True.")
-        dataset = dataset.shuffle(shuffle_buffer_size, seed=shuffle_rng[0])
+        dataset = dataset.shuffle(shuffle_buffer_size, seed=shuffle_rng[0],
+                                  reshuffle_each_iteration=True)
 
     if not repeat_after_batching:
         dataset = dataset.repeat(num_epochs)
-        
+    
+    pp_split = COMMON_TRANSFORMATIONS[dataset_name]
+    if perform_augmentations:
+        add_pp = TRAIN_TRANSFORMATIONS[dataset_name]
+        pp_split = pp_split + '|' + add_pp
+    else:
+        add_pp = TEST_TRANSFORMATIONS[dataset_name]
+        if add_pp is not None:
+            pp_split = pp_split + '|' + add_pp
+
+    # Define Preprocessing Functions for the Datasets using clu.
+    preprocess_fn = preprocess_spec.parse(
+        spec=pp_split, available_ops=tf_preprocess.all_ops())
+    
+    mask_fn = lambda ex: dict(mask=1., **ex)
+    if preprocess_fn is not None:
+        preprocess_and_mask_fn = lambda ex: mask_fn(preprocess_fn(ex))
+    else:
+        preprocess_and_mask_fn = mask_fn
+    
+    dataset = preprocess_with_per_example_rng(
+                dataset, preprocess_and_mask_fn, rng=augment_rng)
+    
     num_devices = jax.local_device_count()
     batch_size_per_device = process_batch_size // num_devices
     
