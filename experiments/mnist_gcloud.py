@@ -1,14 +1,13 @@
 """Training a LeNetSmall model on MNIST."""
 
 import ml_collections
-
-from jaxutils.data.image import METADATA
+from jaxutils.data.pt_image import METADATA
 
 
 def get_config():
     """Config for training LeNetSmall on MNIST."""
     config = ml_collections.ConfigDict()
-    
+
     config.use_tpu = True
 
     config.global_seed = 0
@@ -17,11 +16,11 @@ def get_config():
     config.use_split_global_seed = False
 
     # Dataset Configs
-    config.dataset_type = "tf"
+    config.dataset_type = "pytorch"
 
     config.dataset = ml_collections.ConfigDict()
     config.dataset.dataset_name = "MNIST"
-    
+
     config.dataset.try_gcs = True
     if config.dataset_type == "tf" and config.dataset.try_gcs:
         config.dataset.data_dir = None
@@ -32,13 +31,13 @@ def get_config():
     config.dataset.val_percent = 0.0
     config.dataset.perform_augmentations = True
     config.dataset.num_workers = 16
-    
+
     config.dataset.process_batch_size = 200
     config.dataset.batch_size = config.dataset.process_batch_size
-    
+
     config.dataset.eval_process_batch_size = 2000  # 10000/125
     config.dataset.eval_batch_size = config.dataset.eval_process_batch_size
-    
+
     config.dataset.cache = False
     config.dataset.repeat_after_batching = False
     config.dataset.shuffle_train_split = True
@@ -47,7 +46,7 @@ def get_config():
     config.dataset.prefetch_size = 4
     config.dataset.prefetch_on_device = None
     config.dataset.drop_remainder = True
-    
+
     # Add METADATA information from jaxutils
     for key in METADATA:
         config.dataset[key] = METADATA[key][config.dataset.dataset_name]
@@ -69,8 +68,7 @@ def get_config():
     config.gamma = 0.1
 
     config.lr_schedule = ml_collections.ConfigDict()
-    config.lr_schedule.scales_per_epoch = {
-        '40': config.gamma, '70': config.gamma}
+    config.lr_schedule.scales_per_epoch = {"40": config.gamma, "70": config.gamma}
     config.lr_schedule.boundaries_and_scales = {}
 
     config.optim_name = "adamw"
