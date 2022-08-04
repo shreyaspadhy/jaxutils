@@ -202,6 +202,11 @@ def get_lr_and_schedule(
 
     if optim_config.get("weight_decay", None) is not None:
         optimizer = optimizer(learning_rate=lr, weight_decay=optim_config.weight_decay)
+        return optimizer
+
+    if optim_config.get("nesterov", False)  is True:
+        optimizer = optimizer(learning_rate=lr, momentum=optim_config.momentum,
+                              nesterov=True)
     else:
         optimizer = optimizer(learning_rate=lr)
 
