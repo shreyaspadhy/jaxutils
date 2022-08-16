@@ -1,14 +1,13 @@
 """Training a LeNetSmall model on CIFAR10."""
 
 import ml_collections
-
 from jaxutils.data.image import METADATA
 
 
 def get_config():
     """Config for training LeNetSmall on MNIST."""
     config = ml_collections.ConfigDict()
-    
+
     config.use_tpu = True
 
     config.global_seed = 0
@@ -51,8 +50,7 @@ def get_config():
     config.gamma = 0.1
 
     config.lr_schedule = ml_collections.ConfigDict()
-    config.lr_schedule.scales_per_epoch = {
-        '40': config.gamma, '70': config.gamma}
+    config.lr_schedule.scales_per_epoch = {"40": config.gamma, "70": config.gamma}
     config.lr_schedule.boundaries_and_scales = {}
 
     config.optim_name = "adamw"

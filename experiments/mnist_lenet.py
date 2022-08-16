@@ -1,7 +1,6 @@
 """Training a LeNetSmall model on MNIST."""
 
 import ml_collections
-
 from jaxutils.data.image import METADATA
 
 
@@ -45,8 +44,7 @@ def get_config():
     # Optimizer Configs
     config.lr_schedule_name = "piecewise_constant_schedule"
     config.gamma = 0.1
-    config.scales_per_epoch = {
-        '40': config.gamma, '70': config.gamma}
+    config.scales_per_epoch = {"40": config.gamma, "70": config.gamma}
 
     config.lr_schedule = ml_collections.ConfigDict()
     config.lr_schedule.boundaries_and_scales = {}

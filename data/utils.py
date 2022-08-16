@@ -16,8 +16,10 @@ def get_agnostic_batch(
             tfds_keys = ["image", "label"]
         if "label" in tfds_keys and "label_check" in tfds_keys:
             if batch["label"] != batch["label_check"]:
-                raise ValueError("Label mismatch, check your dataset shuffling when "
-                                 "calculating y_samples.")
+                raise ValueError(
+                    "Label mismatch, check your dataset shuffling when "
+                    "calculating y_samples."
+                )
         batch = tuple([batch[k] for k in tfds_keys])
         # batch = (batch['image'], batch['label'])
 

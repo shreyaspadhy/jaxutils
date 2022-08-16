@@ -17,6 +17,7 @@ import wandb
 
 PyTree = Any
 
+
 class TrainState(train_state.TrainState):
     """A Flax train state that also manages batch norm statistics."""
 
@@ -203,36 +204,35 @@ def get_lr_and_schedule(
 
     optimizer = getattr(optax, optim_name)
     optimizer = optax.inject_hyperparams(optimizer)
-    
+
     use_nesterov = optim_config.get("nesterov", False)
     weight_decay = optim_config.get("weight_decay", None)
 
     if optim_name == "sgd":
         optimizer = optimizer(
-            learning_rate=lr, momentum=optim_config.momentum, 
-            nesterov=use_nesterov)
+            learning_rate=lr, momentum=optim_config.momentum, nesterov=use_nesterov
+        )
         if weight_decay is not None:
             optimizer = optax.chain(
-                optimizer,
-                optax.additive_weight_decay(weight_decay, model_mask))
-    
+                optimizer, optax.additive_weight_decay(weight_decay, model_mask)
+            )
+
     if optim_name == "adamw":
         # If adamw, weight_decay is a passable parameter.
         if weight_decay is None:
             raise ValueError("weight_decay must be specified for adamw")
-        optimizer = optimizer(
-            learning_rate=lr, weight_decay=weight_decay)
-    
+        optimizer = optimizer(learning_rate=lr, weight_decay=weight_decay)
+
     if optim_name == "adam":
         optimizer = optimizer(learning_rate=lr)
 
     # if optim_config.get("weight_decay", None) is not None:
     #     if optim_name == "sgd":
     #         optimizer = optax.chain(
-    #             optimizer(learning_rate=lr) 
+    #             optimizer(learning_rate=lr)
     #             optax.additive_weight_decay(optim_config.weight_decay, model_mask))
     #     elif optim_name == "adamw":
-            
+
     #     return optimizer
 
     # if optim_config.get("nesterov", False)  is True:
@@ -242,7 +242,6 @@ def get_lr_and_schedule(
     #     optimizer = optimizer(learning_rate=lr)
 
     return optimizer
-
 
 
 def get_model_masks(params, param_wd_dict: Union[dict, float]):

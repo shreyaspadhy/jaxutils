@@ -80,7 +80,7 @@ def get_config():
         config.optim.nesterov = False
     elif config.optim_name == "adamw":
         config.optim.lr = 3e-3
-    
+
     config.optim.weight_decay = 1e-4
 
     # Wandb Configs

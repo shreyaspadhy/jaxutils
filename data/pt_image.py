@@ -24,7 +24,7 @@ METADATA = {
         "SVHN": 60_000,
         "CIFAR10": 60_000,
         "CIFAR100": 60_000,
-        "Imagenet": 1_281_167
+        "Imagenet": 1_281_167,
     },
     "num_test": {
         "MNIST": 10_000,
@@ -33,7 +33,7 @@ METADATA = {
         "SVHN": 10_000,
         "CIFAR10": 10_000,
         "CIFAR100": 10_000,
-        "Imagenet": 100_000
+        "Imagenet": 100_000,
     },
     "num_classes": {
         "MNIST": 10,

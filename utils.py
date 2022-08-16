@@ -2,19 +2,17 @@
 
 import collections
 import os
-
 from typing import Callable, Optional
+
 import jax
 import jax.numpy as jnp
-from jax.config import config
-from jax import random
+import ml_collections
 import numpy as np
-# import tensorflow as tf
-import torch
-from flax.traverse_util import flatten_dict, ModelParamTraversal, unflatten_dict
+import tensorflow as tf
+from flax.traverse_util import flatten_dict, unflatten_dict
+from jax import random
 
 import wandb
-import ml_collections
 
 
 def setup_training(wandb_run):
@@ -30,9 +28,12 @@ def setup_training(wandb_run):
         jax.config.update("jax_log_compiles", False)
 
         # Log various JAX configs to wandb, and locally.
-        wandb_run.summary.update({
-            "jax_process_index": jax.process_index(),
-            "jax.process_count": jax.process_count(), })
+        wandb_run.summary.update(
+            {
+                "jax_process_index": jax.process_index(),
+                "jax.process_count": jax.process_count(),
+            }
+        )
     else:
         # config.FLAGS.jax_xla_backend = "tpu_driver"
         # config.FLAGS.jax_backend_target = os.environ['TPU_NAME']
@@ -40,19 +41,16 @@ def setup_training(wandb_run):
         print(jax.default_backend())
         print(jax.device_count(), jax.local_device_count())
         print("8 cores of TPU ( Local devices in Jax ):")
-        print('\n'.join(map(str,jax.local_devices())))
-
-
+        print("\n".join(map(str, jax.local_devices())))
 
 
 # Taken from https://stackoverflow.com/questions/6027558/flatten-nested-dictionaries-compressing-keys
-def flatten_nested_dict(nested_dict, parent_key='', sep='.'):
+def flatten_nested_dict(nested_dict, parent_key="", sep="."):
     items = []
     for name, cfg in nested_dict.items():
         new_key = parent_key + sep + name if parent_key else name
         if isinstance(cfg, collections.MutableMapping):
-            items.extend(flatten_nested_dict(
-                cfg, new_key, sep=sep).items())
+            items.extend(flatten_nested_dict(cfg, new_key, sep=sep).items())
         else:
             items.append((new_key, cfg))
 
@@ -70,14 +68,27 @@ def generate_keys(seed: int):
     rng = random.PRNGKey(seed)
     model_rng, datasplit_rng = jax.random.split(rng, 2)
     datasplit_rng = np.array(
-        random.randint(datasplit_rng, [1, ], 0, 999999), dtype='int64').item(0)
+        random.randint(
+            datasplit_rng,
+            [
+                1,
+            ],
+            0,
+            999999,
+        ),
+        dtype="int64",
+    ).item(0)
 
     return model_rng, datasplit_rng
 
 
 def log_model_params(
-        params, wandb_run, as_summary: bool = False, summary_id: str = '',
-        param_prefix: Optional[str] = None):
+    params,
+    wandb_run,
+    as_summary: bool = False,
+    summary_id: str = "",
+    param_prefix: Optional[str] = None,
+):
     """Log model parameter tensors as histograms to wandb.
     Args:
         params: Model parameters to log as histograms.
@@ -89,24 +100,23 @@ def log_model_params(
     # TODO: Check that params are not already flat
     params = flatten_dict(params)
     for param_name, param in params.items():
-        log_param_name = '/'.join(param_name)
+        log_param_name = "/".join(param_name)
         if param_prefix is not None:
-            log_param_name = param_prefix + '/' + log_param_name
+            log_param_name = param_prefix + "/" + log_param_name
         if as_summary:
             wandb_run.summary.update(
-                {f"{log_param_name}_{summary_id}":
-                    wandb.Histogram(np.asarray(param))})
+                {f"{log_param_name}_{summary_id}": wandb.Histogram(np.asarray(param))}
+            )
         else:
-            wandb_run.log(
-                {log_param_name: wandb.Histogram(np.asarray(param))})
+            wandb_run.log({log_param_name: wandb.Histogram(np.asarray(param))})
 
     params = unflatten_dict(params)
 
 
 def get_agg_fn(agg: str) -> Callable:
-    raise_if_not_in_list(agg, ['mean', 'sum'], 'aggregation')
+    raise_if_not_in_list(agg, ["mean", "sum"], "aggregation")
 
-    if agg == 'mean':
+    if agg == "mean":
         return jnp.mean
     else:
         return jnp.sum
@@ -119,14 +129,14 @@ def tree_concatenate(list_of_trees):
 
 def raise_if_not_in_list(val, valid_options, varname):
     if val not in valid_options:
-        msg = f'`{varname}` should be one of `{valid_options}` but was `{val}` instead.'
+        msg = f"`{varname}` should be one of `{valid_options}` but was `{val}` instead."
         raise RuntimeError(msg)
 
 
 def flatten_params(params):
     vals = []
     for k, v in flatten_dict(params).items():
-        keys = '_'.join(k)
+        keys = "_".join(k)
         if "BatchNorm" not in keys:
             vals.append(v.ravel())
 
@@ -138,7 +148,7 @@ def flatten_params(params):
 def flatten_jacobian(params, n_out):
     vals = []
     for k, v in flatten_dict(params).items():
-        keys = '_'.join(k)
+        keys = "_".join(k)
         if "BatchNorm" not in keys:
             vals.append(v.reshape(n_out, -1))
 
@@ -155,12 +165,10 @@ def print_param_shapes(params):
 def print_params(params):
     for k, v in flatten_dict(params).items():
         print(k, v)
-        
-        
-def update_config_dict(config_dict: ml_collections.ConfigDict, 
-                       run, new_vals: dict):
+
+
+def update_config_dict(config_dict: ml_collections.ConfigDict, run, new_vals: dict):
     config_dict.unlock()
     config_dict.update_from_flattened_dict(new_vals)
     run.config.update(new_vals, allow_val_change=True)
     config_dict.lock()
-    
