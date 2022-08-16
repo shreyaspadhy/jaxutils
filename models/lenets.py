@@ -1,9 +1,9 @@
 """Flax implementations of LeNet variants."""
 from functools import partial
-from typing import Any, Callable, Sequence, Tuple
+from typing import Any
 
-from flax import linen as nn
 import jax.numpy as jnp
+from flax import linen as nn
 
 Moduledef = Any
 
@@ -17,14 +17,20 @@ class conv3_block(nn.Module):
     @nn.compact
     def __call__(self, x, train: bool = True):
         conv = partial(nn.Conv, use_bias=self.bias, dtype=self.dtype)
-        norm = partial(nn.BatchNorm,
-                       use_running_average=not train,
-                       momentum=0.9,
-                       epsilon=1e-5,
-                       dtype=self.dtype)
+        norm = partial(
+            nn.BatchNorm,
+            use_running_average=not train,
+            momentum=0.9,
+            epsilon=1e-5,
+            dtype=self.dtype,
+        )
 
-        x = conv(self.num_filters, (3, 3), (self.stride, self.stride),
-                 padding=[(1, 1), (1, 1)])(x)
+        x = conv(
+            self.num_filters,
+            (3, 3),
+            (self.stride, self.stride),
+            padding=[(1, 1), (1, 1)],
+        )(x)
         x = nn.relu(x)
         x = norm()(x)
 
@@ -40,14 +46,20 @@ class conv5_block(nn.Module):
     @nn.compact
     def __call__(self, x, train: bool = True):
         conv = partial(nn.Conv, use_bias=self.bias, dtype=self.dtype)
-        norm = partial(nn.BatchNorm,
-                       use_running_average=not train,
-                       momentum=0.9,
-                       epsilon=1e-5,
-                       dtype=self.dtype)
+        norm = partial(
+            nn.BatchNorm,
+            use_running_average=not train,
+            momentum=0.9,
+            epsilon=1e-5,
+            dtype=self.dtype,
+        )
 
-        x = conv(self.num_filters, (5, 5), (self.stride, self.stride),
-                 padding=[(2, 2), (2, 2)])(x)
+        x = conv(
+            self.num_filters,
+            (5, 5),
+            (self.stride, self.stride),
+            padding=[(2, 2), (2, 2)],
+        )(x)
         x = nn.relu(x)
         x = norm()(x)
 
@@ -78,7 +90,6 @@ class LeNet(nn.Module):
 
 
 class LeNetSmall(LeNet):
-
     def setup(self):
         self.conv1 = conv5_block(16, stride=2)
         self.conv2 = conv3_block(32, stride=2)

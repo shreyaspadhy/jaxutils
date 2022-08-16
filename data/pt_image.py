@@ -1,6 +1,6 @@
 """Image dataset loading functionality."""
 from pathlib import Path
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple
 
 import numpy as np
 import torch
@@ -8,78 +8,83 @@ from torch.utils import data
 from torchvision import datasets, transforms
 
 METADATA = {
-    'image_shape': {
-        'MNIST': (28, 28, 1),
-        'FashionMNIST': (28, 28, 1),
-        'KMNIST': (28, 28, 1),
-        'SVHN': (32, 32, 3),
-        'CIFAR10': (32, 32, 3),
-        'CIFAR100': (32, 32, 3),
-        'Imagenet': (224, 224, 3),
+    "image_shape": {
+        "MNIST": (28, 28, 1),
+        "FashionMNIST": (28, 28, 1),
+        "KMNIST": (28, 28, 1),
+        "SVHN": (32, 32, 3),
+        "CIFAR10": (32, 32, 3),
+        "CIFAR100": (32, 32, 3),
+        "Imagenet": (224, 224, 3),
     },
-    'num_train': {
-        'MNIST': 60_000,
-        'FashionMNIST': 60_000,
-        'KMNIST': 60_000,
-        'SVHN': 60_000,
-        'CIFAR10': 60_000,
-        'CIFAR100': 60_000,
+    "num_train": {
+        "MNIST": 60_000,
+        "FashionMNIST": 60_000,
+        "KMNIST": 60_000,
+        "SVHN": 60_000,
+        "CIFAR10": 60_000,
+        "CIFAR100": 60_000,
+        "Imagenet": 1_281_167,
     },
-    'num_test': {
-        'MNIST': 10_000,
-        'FashionMNIST': 10_000,
-        'KMNIST': 10_000,
-        'SVHN': 10_000,
-        'CIFAR10': 10_000,
-        'CIFAR100': 10_000,
+    "num_test": {
+        "MNIST": 10_000,
+        "FashionMNIST": 10_000,
+        "KMNIST": 10_000,
+        "SVHN": 10_000,
+        "CIFAR10": 10_000,
+        "CIFAR100": 10_000,
+        "Imagenet": 100_000,
     },
-    'num_classes': {
-        'MNIST': 10,
-        'FashionMNIST': 10,
-        'KMNIST': 10,
-        'SVHN': 10,
-        'CIFAR10': 10,
-        'CIFAR100': 100,
-        'Imagenet': 1000,
+    "num_classes": {
+        "MNIST": 10,
+        "FashionMNIST": 10,
+        "KMNIST": 10,
+        "SVHN": 10,
+        "CIFAR10": 10,
+        "CIFAR100": 100,
+        "Imagenet": 1000,
     },
-    'mean': {
-        'MNIST': (0.1307,),
-        'FashionMNIST': (0.2860,),
-        'SVHN': (0.4377, 0.4438, 0.4728),
-        'CIFAR10': (0.4914, 0.4822, 0.4465),
-        'CIFAR100': (0.5071, 0.4866, 0.4409),
-        'Imagenet': (0.485, 0.456, 0.406),
+    "mean": {
+        "MNIST": (0.1307,),
+        "FashionMNIST": (0.2860,),
+        "SVHN": (0.4377, 0.4438, 0.4728),
+        "CIFAR10": (0.4914, 0.4822, 0.4465),
+        "CIFAR100": (0.5071, 0.4866, 0.4409),
+        "Imagenet": (0.485, 0.456, 0.406),
     },
-    'std': {
-        'MNIST': (0.3081,),
-        'FashionMNIST': (0.3530,),
-        'SVHN': (0.1980, 0.2010, 0.1970),
-        'CIFAR10': (0.2470, 0.2435, 0.2616),
-        'CIFAR100': (0.2673, 0.2564, 0.2762),
-        'Imagenet': (0.229, 0.224, 0.225),
-    }
+    "std": {
+        "MNIST": (0.3081,),
+        "FashionMNIST": (0.3530,),
+        "SVHN": (0.1980, 0.2010, 0.1970),
+        "CIFAR10": (0.2470, 0.2435, 0.2616),
+        "CIFAR100": (0.2673, 0.2564, 0.2762),
+        "Imagenet": (0.229, 0.224, 0.225),
+    },
 }
 
 
 TRAIN_TRANSFORMATIONS = {
-    'MNIST': [transforms.RandomCrop(28, padding=2)],
-    'FashionMNIST': [transforms.RandomCrop(28, padding=2)],
-    'SVHN': [transforms.RandomCrop(32, padding=4)],
-    'CIFAR10': [transforms.RandomCrop(32, padding=4),
-                transforms.RandomHorizontalFlip()],
-    'CIFAR100': [transforms.RandomCrop(32, padding=4),
-                 transforms.RandomHorizontalFlip(), ],
-    'Imagenet': [transforms.RandomResizedCrop(224),
-                 transforms.RandomHorizontalFlip()],
+    "MNIST": [transforms.RandomCrop(28, padding=2)],
+    "FashionMNIST": [transforms.RandomCrop(28, padding=2)],
+    "SVHN": [transforms.RandomCrop(32, padding=4)],
+    "CIFAR10": [
+        transforms.RandomCrop(32, padding=4),
+        transforms.RandomHorizontalFlip(),
+    ],
+    "CIFAR100": [
+        transforms.RandomCrop(32, padding=4),
+        transforms.RandomHorizontalFlip(),
+    ],
+    "Imagenet": [transforms.RandomResizedCrop(224), transforms.RandomHorizontalFlip()],
 }
 
 TEST_TRANSFORMATIONS = {
-    'MNIST': [],
-    'FashionMNIST': [],
-    'SVHN': [],
-    'CIFAR10': [],
-    'CIFAR100': [],
-    'Imagenet': [transforms.Resize(256), transforms.CenterCrop(224)],
+    "MNIST": [],
+    "FashionMNIST": [],
+    "SVHN": [],
+    "CIFAR10": [],
+    "CIFAR100": [],
+    "Imagenet": [transforms.Resize(256), transforms.CenterCrop(224)],
 }
 
 
@@ -115,8 +120,8 @@ def get_image_dataset(
     """Provides PyTorch `Dataset`s for the specified image dataset_name.
     Args:
         dataset_name: the `str` name of the dataset. E.g. `'MNIST'`.
-        data_dir: the `str` directory where the datasets should be downloaded to
-            and loaded from. (Default: `'../raw_data'`)
+        data_dir: the directory where the datasets should be downloaded to and
+          loaded from. (Default: `'../raw_data'`)
         flatten_img: a `bool` indicating whether images should be flattened.
             (Default: `False`)
         val_percent: the `float` percentage of training data to use for
@@ -138,7 +143,10 @@ def get_image_dataset(
         "Imagenet",
     ]
     if dataset_name not in dataset_choices:
-        msg = f"Dataset should be one of {dataset_choices} but was {dataset_name} instead."
+        msg = (
+            f"Dataset should be one of {dataset_choices} but was "
+            + f"{dataset_name} instead."
+        )
         raise RuntimeError(msg)
 
     if dataset_name in ["MNIST", "FashionMNIST", "CIFAR10", "CIFAR100", "Imagenet"]:
@@ -171,7 +179,8 @@ def get_image_dataset(
         + [
             transforms.ToTensor(),
             transforms.Normalize(
-                METADATA['mean'][dataset_name], METADATA['std'][dataset_name]),
+                METADATA["mean"][dataset_name], METADATA["std"][dataset_name]
+            ),
         ]
         + common_transforms
     )
@@ -181,7 +190,8 @@ def get_image_dataset(
         + [
             transforms.ToTensor(),
             transforms.Normalize(
-                METADATA['mean'][dataset_name], METADATA['std'][dataset_name]),
+                METADATA["mean"][dataset_name], METADATA["std"][dataset_name]
+            ),
         ]
         + common_transforms
     )
@@ -190,8 +200,7 @@ def get_image_dataset(
         train_dir = data_dir / "imagenet/train"
         val_dir = data_dir / "imagenet/val"
 
-        train_dataset = datasets.ImageFolder(
-            train_dir, transform=transform_train)
+        train_dataset = datasets.ImageFolder(train_dir, transform=transform_train)
 
         test_dataset = datasets.ImageFolder(val_dir, transform=transform_test)
 
@@ -211,8 +220,7 @@ def get_image_dataset(
         )
 
     if val_percent != 0.0:
-        num_train, num_val = train_val_split_sizes(
-            len(train_dataset), val_percent)
+        num_train, num_val = train_val_split_sizes(len(train_dataset), val_percent)
 
         train_dataset, val_dataset = data.random_split(
             train_dataset,
