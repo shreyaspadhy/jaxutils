@@ -1,5 +1,6 @@
-from typing import Callable, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional, Union
 
+import jax
 import jax.numpy as jnp
 import ml_collections
 import optax
@@ -7,12 +8,14 @@ from flax import jax_utils
 from flax.core.frozen_dict import FrozenDict
 from flax.jax_utils import unreplicate
 from flax.training import train_state
+from flax.traverse_util import ModelParamTraversal
 from jax.tree_util import tree_map
 from jaxutils.data.utils import get_agnostic_batch
 from jaxutils.utils import tree_concatenate
 
 import wandb
 
+PyTree = Any
 
 class TrainState(train_state.TrainState):
     """A Flax train state that also manages batch norm statistics."""
@@ -155,6 +158,7 @@ def get_lr_and_schedule(
     lr_schedule_name: Optional[str],
     lr_schedule_config: Optional[ml_collections.ConfigDict],
     steps_per_epoch: Optional[int] = None,
+    model_mask: Optional[PyTree] = None,
 ):
     """Returns an optimizer with (optional lr_schedule)."""
     if lr_schedule_name is not None and lr_schedule_config is not None:
@@ -199,15 +203,66 @@ def get_lr_and_schedule(
 
     optimizer = getattr(optax, optim_name)
     optimizer = optax.inject_hyperparams(optimizer)
+    
+    use_nesterov = optim_config.get("nesterov", False)
+    weight_decay = optim_config.get("weight_decay", None)
 
-    if optim_config.get("weight_decay", None) is not None:
-        optimizer = optimizer(learning_rate=lr, weight_decay=optim_config.weight_decay)
-        return optimizer
-
-    if optim_config.get("nesterov", False)  is True:
-        optimizer = optimizer(learning_rate=lr, momentum=optim_config.momentum,
-                              nesterov=True)
-    else:
+    if optim_name == "sgd":
+        optimizer = optimizer(
+            learning_rate=lr, momentum=optim_config.momentum, 
+            nesterov=use_nesterov)
+        if weight_decay is not None:
+            optimizer = optax.chain(
+                optimizer,
+                optax.additive_weight_decay(weight_decay, model_mask))
+    
+    if optim_name == "adamw":
+        # If adamw, weight_decay is a passable parameter.
+        if weight_decay is None:
+            raise ValueError("weight_decay must be specified for adamw")
+        optimizer = optimizer(
+            learning_rate=lr, weight_decay=weight_decay)
+    
+    if optim_name == "adam":
         optimizer = optimizer(learning_rate=lr)
 
+    # if optim_config.get("weight_decay", None) is not None:
+    #     if optim_name == "sgd":
+    #         optimizer = optax.chain(
+    #             optimizer(learning_rate=lr) 
+    #             optax.additive_weight_decay(optim_config.weight_decay, model_mask))
+    #     elif optim_name == "adamw":
+            
+    #     return optimizer
+
+    # if optim_config.get("nesterov", False)  is True:
+    #     optimizer = optimizer(learning_rate=lr, momentum=optim_config.momentum,
+    #                           nesterov=True)
+    # else:
+    #     optimizer = optimizer(learning_rate=lr)
+
     return optimizer
+
+
+
+def get_model_masks(params, param_wd_dict: Union[dict, float]):
+    """Create boolean masks on Pytrees for model parameters.
+    Args:
+        params (Pytree): Model parameters.
+        param_wd_dict: Dictionary containing param names for which unique
+            masks are required to be created.
+    Returns:
+        dict: Dictionary containing Pytree masks for each param name.
+    """
+    # If weight_decay params is a float, return all params to perform wd over.
+    if isinstance(param_wd_dict, float):
+        all_true = jax.tree_map(lambda _: True, params)
+        return all_true
+    # Otherwise, iterate through dict, and return dict of model masks.
+    all_false = jax.tree_map(lambda _: False, params)
+    param_masks = {}
+    for name in param_wd_dict.keys():
+        subparam_update = ModelParamTraversal(lambda p, _: name in p)
+        param_masks[name] = subparam_update.update(lambda _: True, all_false)
+
+    return param_masks

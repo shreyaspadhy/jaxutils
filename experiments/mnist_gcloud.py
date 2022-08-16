@@ -16,7 +16,7 @@ def get_config():
     config.use_split_global_seed = False
 
     # Dataset Configs
-    config.dataset_type = "pytorch"
+    config.dataset_type = "tf"
 
     config.dataset = ml_collections.ConfigDict()
     config.dataset.dataset_name = "MNIST"
@@ -71,14 +71,21 @@ def get_config():
     config.lr_schedule.scales_per_epoch = {"40": config.gamma, "70": config.gamma}
     config.lr_schedule.boundaries_and_scales = {}
 
-    config.optim_name = "adamw"
+    config.optim_name = "sgd"
+
     config.optim = ml_collections.ConfigDict()
-    config.optim.lr = 3e-3
+    if config.optim_name == "sgd":
+        config.optim.lr = 1e-2
+        config.optim.momentum = 0.9
+        config.optim.nesterov = False
+    elif config.optim_name == "adamw":
+        config.optim.lr = 3e-3
+    
     config.optim.weight_decay = 1e-4
 
     # Wandb Configs
     config.wandb = ml_collections.ConfigDict()
-    config.wandb.log = True
+    config.wandb.log = False
     config.wandb.load_model = False
     config.wandb.project = "sampled-laplace"
     config.wandb.entity = "cbl-mlg"

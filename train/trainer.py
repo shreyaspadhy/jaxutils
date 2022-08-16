@@ -22,6 +22,7 @@ from jaxutils.train.utils import (
     TrainState,
     eval_epoch,
     get_lr_and_schedule,
+    get_model_masks,
     train_epoch,
 )
 from jaxutils.utils import (
@@ -238,6 +239,10 @@ def main(config):
         del variables
 
         # Get Optimizer and Learning Rate Schedule, if any
+        if config.optim.get("weight_decay", None) is not None:
+            model_mask = get_model_masks(params, config.optim.weight_decay)
+        else:
+            model_mask = None
         config.unlock()
         optimizer = get_lr_and_schedule(
             config.optim_name,
@@ -245,6 +250,7 @@ def main(config):
             config.get("lr_schedule_name", None),
             config.get("lr_schedule", None),
             steps_per_epoch=config.train_steps_per_epoch,
+            model_mask=model_mask,
         )
         config.lock()
 
@@ -388,7 +394,11 @@ def train_model(
             epochs.set_postfix(test_metrics)
 
         # Save any auxilliary variables to log
-        run.log({"lr": unreplicate(state).opt_state.hyperparams["learning_rate"]})
+        if isinstance(unreplicate(state).opt_state, tuple):
+            lr_to_log = unreplicate(state).opt_state[0].hyperparams["learning_rate"]
+        else:
+            lr_to_log = unreplicate(state).opt_state.hyperparams["learning_rate"]
+        run.log({"lr": lr_to_log})
 
         # Save Model Checkpoints
         if (epoch + 1) % config.save_interval == 0:
