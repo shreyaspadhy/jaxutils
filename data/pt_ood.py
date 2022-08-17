@@ -92,11 +92,7 @@ def load_rotated_dataset(
         source_dset.data = source_dset.data[subset]
         source_dset.targets = source_dset.targets[subset]
 
-    source_loader = torch.utils.data.DataLoader(
-        source_dset,
-        batch_size=batch_size, shuffle=False,
-        num_workers=num_workers)
-    # source_loader = NumpyLoader(
-    #     source_dset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+    source_loader = NumpyLoader(
+        source_dset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
-    return source_loader
+    return source_loader, source_dset
