@@ -199,6 +199,21 @@ def get_lr_and_schedule(
                 decay_rate=lr_schedule_config.decay_rate,
                 transition_steps=lr_schedule_config.transition_steps,
             )
+        elif lr_schedule_name == "warmup_exponential_decay_schedule":
+            # Check required configs are present
+            required_configs = ["init_value", "warmup_steps", "transition_steps",
+                                "decay_rate", "transition_begin",]
+            if not all(name in lr_schedule_config for name in required_configs):
+                raise ValueError(f"{lr_schedule_name} requires {required_configs}")
+            
+            # Define RL Schedule
+            lr = schedule(
+                init_value=lr_schedule_config.init_value,
+                peak_value=optim_config.lr,
+                warmup_steps=lr_schedule_config.warmup_steps,
+                transition_steps=lr_schedule_config.transition_steps,
+                decay_rate=lr_schedule_config.decay_rate,
+                transition_begin=lr_schedule_config.transition_begin,)
     else:
         lr = optim_config.lr
 
@@ -256,6 +271,7 @@ def get_model_masks(params, param_wd_dict: Union[dict, float]):
     # If weight_decay params is a float, return all params to perform wd over.
     if isinstance(param_wd_dict, float):
         all_true = jax.tree_map(lambda _: True, params)
+        print('resturn all')
         return all_true
     # Otherwise, iterate through dict, and return dict of model masks.
     all_false = jax.tree_map(lambda _: False, params)

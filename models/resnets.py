@@ -134,3 +134,7 @@ class ResNet(nn.Module):
         x = jnp.asarray(x, self.dtype)
         # x = nn.log_softmax(x)  # to match the Torch implementation at https://github.com/pytorch/vision/blob/master/torchvision/models/resnet.py
         return x
+
+
+ResNet18 = partial(ResNet, stage_sizes=[2, 2, 2, 2],
+                   block_cls=ResNetBlock)

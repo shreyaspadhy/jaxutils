@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Optional, Union
 
 import jax
+import jaxutils
 import jax.numpy as jnp
 import jax.random as random
 import ml_collections.config_flags
@@ -16,7 +17,7 @@ from jaxutils.data.pt_preprocess import NumpyLoader
 from jaxutils.data.tf_image import PYTORCH_TO_TF_NAMES, get_image_dataloader
 from jaxutils.data.tf_image import get_image_dataset as get_tf_image_dataset
 from jaxutils.data.utils import get_agnostic_iterator
-from jaxutils.models.lenets import LeNetSmall
+import jaxutils.models as models
 from jaxutils.train.classification import create_eval_step, create_train_step
 from jaxutils.train.utils import (
     TrainState,
@@ -229,35 +230,19 @@ def main(config):
             update_config_dict(config, run, train_config)
 
         # Create and initialise model
-        model = LeNetSmall(**config.model.to_dict())
+        model_cls = getattr(models, config.model_name)
+        model = model_cls(**config.model.to_dict())
+        # model = LeNetSmall(**config.model.to_dict())
         # model = ResNet(block_cls=ResNetBlock, **config.model.to_dict())
 
         dummy_init = jnp.expand_dims(jnp.ones(config.dataset.image_shape), 0)
         variables = model.init(model_rng, dummy_init)
 
         model_state, params = variables.pop("params")
+        print('length params : ', len(params.keys()), len(model_state.keys()))
+        # jaxutils.utils.print_param_shapes(params)
         del variables
 
-        # Get Optimizer and Learning Rate Schedule, if any
-        if config.optim.get("weight_decay", None) is not None:
-            model_mask = get_model_masks(params, config.optim.weight_decay)
-        else:
-            model_mask = None
-        config.unlock()
-        optimizer = get_lr_and_schedule(
-            config.optim_name,
-            config.optim,
-            config.get("lr_schedule_name", None),
-            config.get("lr_schedule", None),
-            steps_per_epoch=config.train_steps_per_epoch,
-            model_mask=model_mask,
-        )
-        config.lock()
-
-        # Create train_state to save and load
-        state = TrainState.create(
-            apply_fn=model.apply, params=params, tx=optimizer, model_state=model_state
-        )
 
         # Load from checkpoint, and append specific model seed
         config.unlock()
@@ -268,16 +253,38 @@ def main(config):
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
         if config.load_from_checkpoint:
-            if config.wandb.load_model:
-                model_at = wandb.run.use_artifact(
-                    config.wandb.model_artifact_name + ":latest"
-                )
-                checkpoint_path = model_at.download()
-                state = checkpoints.restore_checkpoint(checkpoint_path, target=state)
-            else:
-                print(f"checkpoint_dir: {checkpoint_dir}")
-                checkpoint_path = checkpoints.latest_checkpoint(checkpoint_dir)
-                state = checkpoints.restore_checkpoint(checkpoint_path, target=state)
+            print(f"checkpoint_dir: {checkpoint_dir}")
+            checkpoint_path = checkpoints.latest_checkpoint(checkpoint_dir)
+            print('test')
+            restored_state = checkpoints.restore_checkpoint(checkpoint_path, 
+                                                            target=None)
+            params = restored_state["params"]
+            model_state = restored_state["model_state"]
+        
+        # Get Optimizer and Learning Rate Schedule, if any
+        if config.optim.get("weight_decay", None) is not None:
+            model_mask = get_model_masks(params, 
+                                         config.optim.weight_decay)
+        else:
+            model_mask = None
+        config.unlock()
+
+        optimizer = get_lr_and_schedule(
+            config.optim_name,
+            config.optim,
+            config.get("lr_schedule_name", None),
+            config.get("lr_schedule", None),
+            steps_per_epoch=config.train_steps_per_epoch,
+            model_mask=model_mask,
+        )
+        config.lock()
+        
+        state = TrainState.create(
+            apply_fn=model.apply,
+            model_state=model_state,
+            params=params,
+            tx=optimizer,
+            )
 
         # Define model artifacts to save models using wandb.
         model_artifact = wandb.Artifact(
@@ -395,7 +402,7 @@ def train_model(
 
         # Save any auxilliary variables to log
         if isinstance(unreplicate(state).opt_state, tuple):
-            lr_to_log = unreplicate(state).opt_state[0].hyperparams["learning_rate"]
+            lr_to_log = unreplicate(state).opt_state.hyperparams["learning_rate"]
         else:
             lr_to_log = unreplicate(state).opt_state.hyperparams["learning_rate"]
         run.log({"lr": lr_to_log})
