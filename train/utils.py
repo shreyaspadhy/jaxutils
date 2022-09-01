@@ -69,6 +69,9 @@ def batchwise_metrics_dict(metrics_dict, batch_size, prefix):
 
     return new_metrics_dict
 
+def add_prefix_to_dict_keys(d, prefix):
+    """Add prefix to all keys in a dictionary."""
+    return {f"{prefix}/{k}": v for k, v in d.items()}
 
 def train_epoch(
     train_step_fn: Callable,
@@ -80,17 +83,36 @@ def train_epoch(
     log_prefix: str,
     dataset_type: str = "tf",
     log_global_metrics: bool = False,
-    epoch=0,
+    epoch: int = 0,
+    num_epochs: int = 1,
+    em_step: Optional[int] = None,
 ):
     assert dataset_type in ["tf", "pytorch"]
+    
+    log_prefix = log_prefix + f"/em_{em_step}" if em_step is not None else log_prefix
+    em_epoch = em_step * num_epochs + epoch if em_step is not None else epoch
     batch_metrics = []
     for i in range(steps_per_epoch):
         batch = get_agnostic_batch(next(data_iterator), dataset_type)
         n_devices, B = batch[0].shape[:2]
 
+        
         if log_global_metrics:
             state, metrics, global_metrics = train_step_fn(state, *batch)
-            wandb_run.log(unreplicate(global_metrics))
+        else:
+            state, metrics = train_step_fn(state, *batch)
+        
+        ######################## EVERYTHING BELOW IS FOR W&B LOGGING ##############
+        train_step = epoch * steps_per_epoch + i
+        em_train_step = em_epoch * steps_per_epoch + i
+
+        if log_global_metrics:
+            global_metrics = unreplicate(global_metrics)
+            if em_step is not None:
+                global_metrics = add_prefix_to_dict_keys(global_metrics, f"em_{em_step}")
+            wandb_run.log({**global_metrics,
+                           **{'linear/train_step': train_step, 
+                              'linear/em_train_step': em_train_step}})
         else:
             state, metrics = train_step_fn(state, *batch)
         # These metrics are summed over each sharded batch, and averaged
@@ -98,13 +120,19 @@ def train_epoch(
         # over the entire dataset correctly, and then aggregate.
         metrics = unreplicate(metrics)
         batch_metrics.append(metrics)
+        
         # Further divide by sharded batch size, to get average metrics
-        wandb_run.log(batchwise_metrics_dict(metrics, B, f"{log_prefix}/batchwise"))
+        metrics = {**batchwise_metrics_dict(metrics, B, f"{log_prefix}/batchwise"),
+                   **{'linear/train_step': train_step, 
+                      'linear/em_train_step': em_train_step}}
+        wandb_run.log(metrics)
 
     epoch_metrics = aggregated_metrics_dict(
         batch_metrics, num_points, log_prefix, n_devices=n_devices
     )
-    wandb_run.log(epoch_metrics)
+    wandb_run.log({**epoch_metrics,
+                   **{'linear/train_epoch': epoch, 
+                      'linear/em_train_epoch': em_epoch}})
 
     if log_global_metrics:
         return state, epoch_metrics, global_metrics
