@@ -199,6 +199,21 @@ def get_lr_and_schedule(
                 decay_rate=lr_schedule_config.decay_rate,
                 transition_steps=lr_schedule_config.transition_steps,
             )
+
+        elif lr_schedule_name == "linear_schedule":
+            # Check required configs are present
+            required_configs = ["end_value", "transition_steps"]
+            if not all(name in lr_schedule_config for name in required_configs):
+                raise ValueError(f"{lr_schedule_name} requires {required_configs}")
+
+            # Define LR Schedule
+            lr = schedule(
+                init_value=optim_config.lr,
+                end_value=lr_schedule_config.end_value,
+                transition_steps=lr_schedule_config.transition_steps,
+            )
+        else:
+            raise ValueError("Scheduler not supported")
     else:
         lr = optim_config.lr
 
@@ -207,6 +222,8 @@ def get_lr_and_schedule(
 
     use_nesterov = optim_config.get("nesterov", False)
     weight_decay = optim_config.get("weight_decay", None)
+
+    absolute_clipping = optim_config.get("absolute_clipping", None)
 
     if optim_name == "sgd":
         optimizer = optimizer(
@@ -225,6 +242,14 @@ def get_lr_and_schedule(
 
     if optim_name == "adam":
         optimizer = optimizer(learning_rate=lr)
+
+    if absolute_clipping is not None:
+        
+        optimizer = optax.chain(
+            optax.clip_by_global_norm(absolute_clipping),
+            optimizer
+        )
+
 
     # if optim_config.get("weight_decay", None) is not None:
     #     if optim_name == "sgd":
