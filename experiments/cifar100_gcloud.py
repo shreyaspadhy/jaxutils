@@ -1,11 +1,11 @@
-"""Training a LeNetSmall model on MNIST."""
+"""Training a ResNet18 model on CIFAR100."""
 
 import ml_collections
 from jaxutils.data.pt_image import METADATA
 
 
 def get_config():
-    """Config for training LeNetSmall on MNIST."""
+    """Config for training CIFAR100."""
     config = ml_collections.ConfigDict()
 
     config.use_tpu = True
@@ -19,9 +19,9 @@ def get_config():
     config.dataset_type = "tf"
 
     config.dataset = ml_collections.ConfigDict()
-    config.dataset.dataset_name = "MNIST"
+    config.dataset.dataset_name = "CIFAR100"
 
-    config.dataset.try_gcs = True
+    config.dataset.try_gcs = False
     if config.dataset_type == "tf" and config.dataset.try_gcs:
         config.dataset.data_dir = None
     else:
@@ -51,16 +51,18 @@ def get_config():
     for key in METADATA:
         config.dataset[key] = METADATA[key][config.dataset.dataset_name]
 
-    config.n_epochs = 90
+    config.n_epochs = 300
     config.perform_eval = True
     config.eval_interval = 5
 
     # Model Configs
-    config.model_name = "LeNetSmall"
+    config.model_name = "ResNet18"
     config.model = ml_collections.ConfigDict()
-    config.model.n_out = config.dataset.num_classes
+    config.model.num_classes = config.dataset.num_classes
+    config.model.initial_conv = '1x3'
 
-    config.checkpoint_dir = "/home/shreyaspadhy_gmail_com/flax_models/MNIST"
+    config.checkpoint_dir = "/home/shreyaspadhy_gmail_com/flax_models/CIFAR100"
+    # config.checkpoint_dir = "/home/shreyaspadhy_gmail_com/converted_models/cifar100/"
     config.load_from_checkpoint = False
     config.save_interval = 20
 
@@ -69,14 +71,14 @@ def get_config():
     config.gamma = 0.1
 
     config.lr_schedule = ml_collections.ConfigDict()
-    config.lr_schedule.scales_per_epoch = {"40": config.gamma, "70": config.gamma}
+    config.lr_schedule.scales_per_epoch = {"150": config.gamma, "225": config.gamma}
     config.lr_schedule.boundaries_and_scales = {}
 
-    config.optim_name = "sgd"
+    config.optim_name = "adamw"
 
     config.optim = ml_collections.ConfigDict()
     if config.optim_name == "sgd":
-        config.optim.lr = 1e-2
+        config.optim.lr = 1e-6
         config.optim.momentum = 0.9
         config.optim.nesterov = False
     elif config.optim_name == "adamw":
@@ -86,11 +88,11 @@ def get_config():
 
     # Wandb Configs
     config.wandb = ml_collections.ConfigDict()
-    config.wandb.log = False
+    config.wandb.log = True
     config.wandb.load_model = False
     config.wandb.project = "sampled-laplace"
     config.wandb.entity = "cbl-mlg"
-    config.wandb.artifact_name = "lenetsmall_mnist"
+    config.wandb.artifact_name = "resnet18_cifar100"
     config.wandb.params_log_interval = 10
     config.wandb.code_dir = "/home/shreyaspadhy_gmail_com/linearised-NNs"
 
