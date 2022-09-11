@@ -38,7 +38,7 @@ def create_crossentropy_loss(
     def batched_loss_fn(params, model_state):
         # Get either mean or sum aggregations
         agg = get_agg_fn(aggregate)
-        # model.apply is already vectorised over the batch dimension.
+        # model.apply is already vectorised over the  batch dimension.
         batch_logits, new_state = model.apply(
             {"params": params, **model_state},
             batch_inputs,
@@ -104,4 +104,4 @@ def _create_loss_and_metrics(batch_logits, batch_labels, num_classes):
 
     accuracy = jnp.argmax(batch_logits, -1) == batch_labels
 
-    return {"nll": loss, "accuracy": accuracy, "error": 1 - accuracy}
+    return {"nll": loss, "ll": -loss, "accuracy": accuracy, "error": 1 - accuracy}

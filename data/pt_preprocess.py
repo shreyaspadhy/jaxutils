@@ -4,6 +4,7 @@ Taken from: colab.research.google.com/github/google/jax/blob/main/docs/notebooks
 
 import numpy as np
 from torch.utils import data
+from PIL import Image
 
 
 class NumpyLoader(data.DataLoader):
@@ -47,3 +48,42 @@ def _numpy_collate(batch):
         return [_numpy_collate(samples) for samples in transposed]
     else:
         return np.array(batch)
+
+
+# Taken from https://github.com/edaxberger/bayesian-lottery-tickets/blob/a3e67ad593b2716b6c1fac272916f887349740cc/src/utils.py#L231
+class Datafeed(data.Dataset):
+
+    def __init__(self, x_train, y_train=None, transform=None):
+        self.data = x_train
+        self.targets = y_train
+        self.transform = transform
+
+    def __getitem__(self, index):
+        img = self.data[index]
+        if self.transform is not None:
+            img = self.transform(img)
+        if self.targets is not None:
+            return img, self.targets[index]
+        else:
+            return img
+
+    def __len__(self):
+        return len(self.data)
+
+
+# Taken from https://github.com/edaxberger/bayesian-lottery-tickets/blob/a3e67ad593b2716b6c1fac272916f887349740cc/src/utils.py#L436
+class DatafeedImage(data.Dataset):
+    def __init__(self, x_train, y_train, transform=None):
+        self.x_train = x_train
+        self.y_train = y_train
+        self.transform = transform
+
+    def __getitem__(self, index):
+        img = self.x_train[index]
+        img = Image.fromarray(img)
+        if self.transform is not None:
+            img = self.transform(img)
+        return img, self.y_train[index]
+
+    def __len__(self):
+        return len(self.x_train)
