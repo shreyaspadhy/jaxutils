@@ -95,3 +95,11 @@ class LeNetSmall(LeNet):
         self.conv2 = conv3_block(32, stride=2)
         self.conv3 = conv3_block(32, stride=2)
         self.dense = nn.Dense(self.n_out, dtype=self.dtype)
+
+
+class LeNetBig(LeNet):
+    def setup(self):
+        self.conv1 = conv5_block(42, stride=2)
+        self.conv2 = conv3_block(48, stride=2)
+        self.conv3 = conv3_block(60, stride=2)
+        self.dense = nn.Dense(self.n_out, dtype=self.dtype)

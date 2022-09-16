@@ -171,7 +171,7 @@ def convert_model(
 
     if model_name == "resnet18":
         convert_keys = convert_resnet_param_keys
-    elif model_name == "LeNetSmall":
+    elif model_name in ["LeNetSmall", "LeNet", "LeNetBig"]:
         convert_keys = convert_lenet_param_keys
     else:
         raise NotImplementedError(f"{model_name} conversion not implemented yet.")
