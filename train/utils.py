@@ -91,7 +91,7 @@ def train_epoch(
     
     log_prefix = log_prefix + f"/em_{em_step}" if em_step is not None else log_prefix
     step_log_prefix = log_prefix.split("/")[0]
-    # print('DEBUG : ', step_log_prefix)
+
     em_epoch = em_step * num_epochs + epoch if em_step is not None else epoch
     batch_metrics = []
     for i in range(steps_per_epoch):

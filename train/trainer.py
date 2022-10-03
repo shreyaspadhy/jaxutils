@@ -240,8 +240,6 @@ def main(config):
         variables = model.init(model_rng, dummy_init)
 
         model_state, params = variables.pop("params")
-        print('length params : ', len(params.keys()), len(model_state.keys()))
-        # jaxutils.utils.print_param_shapes(params)
         del variables
 
 
