@@ -19,6 +19,7 @@ from jaxutils.data.tf_image import get_image_dataset as get_tf_image_dataset
 from jaxutils.data.utils import get_agnostic_iterator
 import jaxutils.models as models
 from jaxutils.train.classification import create_eval_step, create_train_step
+import optax
 from jaxutils.train.utils import (
     TrainState,
     eval_epoch,
@@ -347,7 +348,7 @@ def train_model(
             wandb_run=run,
             log_prefix="train",
             dataset_type=config.dataset_type,
-            epoch=epochs,
+            epoch=epoch,
         )
 
         epochs.set_postfix(train_metrics)
@@ -400,11 +401,20 @@ def train_model(
             )
             epochs.set_postfix(test_metrics)
 
-        # Save any auxilliary variables to log
-        if isinstance(unreplicate(state).opt_state, tuple):
-            lr_to_log = unreplicate(state).opt_state.hyperparams["learning_rate"]
-        else:
-            lr_to_log = unreplicate(state).opt_state.hyperparams["learning_rate"]
+        # Find the part of opt_state that contains InjectHyperparamsState
+        opt_state = unreplicate(state).opt_state
+        if isinstance(opt_state, optax.InjectHyperparamsState):
+            lr_to_log = opt_state.hyperparams["learning_rate"]
+        elif isinstance(opt_state, tuple):
+            for o_state in opt_state:
+                # print('test', type(o_state))
+                if isinstance(o_state, optax.InjectHyperparamsState):
+                    lr_to_log = o_state.hyperparams["learning_rate"]
+                if isinstance(o_state, tuple):
+                    for o_state2 in o_state:
+                        if isinstance(o_state2, optax.InjectHyperparamsState):
+                            lr_to_log = o_state2.hyperparams["learning_rate"]
+
         run.log({"lr": lr_to_log})
 
         # Save Model Checkpoints
