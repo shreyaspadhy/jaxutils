@@ -1,8 +1,0 @@
-cpu
-1 1
-8 cores of TPU ( Local devices in Jax ):
-TFRT_CPU_0
-checkpoint_dir: /home/shreyaspadhy_gmail_com/converted_models/cifar100/0
-test
-dict_keys(['step', 'params', 'opt_state', 'model_state'])
-test
