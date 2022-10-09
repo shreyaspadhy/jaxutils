@@ -314,6 +314,21 @@ def get_lr_and_schedule(
     return optimizer
 
 
+def get_lr_from_opt_state(opt_state):
+    """Returns the learning rate from the opt_state."""
+    if isinstance(opt_state, optax.InjectHyperparamsState):
+        lr = opt_state.hyperparams["learning_rate"]
+    elif isinstance(opt_state, tuple):
+        for o_state in opt_state:
+            if isinstance(o_state, optax.InjectHyperparamsState):
+                lr = o_state.hyperparams["learning_rate"]
+            if isinstance(o_state, tuple):
+                for o_state2 in o_state:
+                    if isinstance(o_state2, optax.InjectHyperparamsState):
+                        lr = o_state2.hyperparams["learning_rate"]
+    
+    return lr
+
 def get_model_masks(params, param_wd_dict: Union[dict, float]):
     """Create boolean masks on Pytrees for model parameters.
     Args:
