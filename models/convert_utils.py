@@ -191,7 +191,8 @@ def convert_resnet_param_keys(pytorch_name, model_name="resnet18"):
 
 
 def convert_model(
-    model_name: str, pytorch_model: torch.nn.Module, jax_params: PyTree
+    model_name: str, pytorch_model: torch.nn.Module, jax_params: PyTree,
+    dataparallel_model: bool = False
 ) -> PyTree:
     """Utility function to transfer params from Pytorch models to Flax."""
     # TODO: Add a check that params is frozen and not flat, and not repeat
@@ -205,7 +206,10 @@ def convert_model(
         raise NotImplementedError(f"{model_name} conversion not implemented yet.")
 
     jax_to_pytorch_keys, converted_jax_params = {}, {}
+    print(pytorch_model.state_dict().keys())
     for key, param in pytorch_model.state_dict().items():
+        if dataparallel_model:
+            key = key[7:]
         if convert_keys(key, model_name) is not None:
             jax_to_pytorch_keys[convert_keys(key, model_name)] = key
 
@@ -215,7 +219,7 @@ def convert_model(
             # Pytorch # [outC, inC, kH, kW] -> Jax [kH, kW, inC, outC]
             converted_jax_params[key] = param.numpy().transpose((2, 3, 1, 0))
 
-    # print(jax_to_pytorch_keys)
+    print(jax_to_pytorch_keys)
     new_jax_params = {
         key: converted_jax_params[jax_to_pytorch_keys[key]] for key in jax_params.keys()
     }
