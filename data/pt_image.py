@@ -75,7 +75,8 @@ TRAIN_TRANSFORMATIONS = {
         transforms.RandomCrop(32, padding=4),
         transforms.RandomHorizontalFlip(),
     ],
-    "Imagenet": [transforms.RandomResizedCrop(224), transforms.RandomHorizontalFlip()],
+    "Imagenet": [transforms.RandomResizedCrop(224), 
+                 transforms.RandomHorizontalFlip()],
 }
 
 TEST_TRANSFORMATIONS = {
@@ -200,8 +201,8 @@ def get_image_dataset(
         train_dir = data_dir / "imagenet/train"
         val_dir = data_dir / "imagenet/val"
 
-        train_dataset = datasets.ImageFolder(train_dir, transform=transform_train)
-
+        # train_dataset = datasets.ImageFolder(train_dir, transform=transform_train)
+        train_dataset = datasets.ImageNet(data_dir, split="train", transform=transform_train)
         test_dataset = datasets.ImageFolder(val_dir, transform=transform_test)
 
     else:

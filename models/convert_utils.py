@@ -59,29 +59,57 @@ def convert_resnet_param_keys(pytorch_name, model_name="resnet18"):
     if model_name == "resnet18":
         block_name = "ResNetBlock"
         layer_list = [2, 2, 2, 2]
+    elif model_name == "resnet50":
+        block_name = "BottleneckResNetBlock"
+        layer_list = [3, 4, 6, 3]
     else:
-        raise NotImplementedError("Only resnet18 implemented for now.")
+        raise NotImplementedError("Only resnet18 and resnet50 implemented for now.")
 
     #################### First Layer Weights and BN Layers #################
-    # conv1.0.weight -> (params, conv_init, kernel)
-    if split[0] == "conv1" and split[1] == "0":
-        if split[2] in ["bias"]:
-            logging.warning("conv1.0.bias is not a valid key for BLT models")
-            return None
+    # TODO: Can probably combine these if-else statements.
+    if model_name == "resnet50":  # 3x3 conv blocks are involved    
+        conv1_layer_map = {"0": "0", "3": "1", "6": "2"}
+        # conv1.{0, 3, 6}.weight -> (params, conv_init_{0, 1, 2}, kernel)
+        if split[0] == "conv1" and split[1] in conv1_layer_map.keys():
+            if split[2] in ["bias"]:
+                logging.warning(
+                    f"conv1.{conv1_layer_map[split[1]]}.bias is not a valid key for BLT models")
+                return None
 
-        return ("params", "conv_init", "kernel")
+            return ("params", f"conv_init_{conv1_layer_map[split[1]]}", "kernel")
+        
+        conv1_bn_layer_map = {"1": "0", "4": "1", "7": "2"}
+        # conv1.{1, 4, 7}.{weight|bias|running_mean|running_var} -> ({params|batch_stats}, bn_init, {scale|bias|mean|var})
+        if split[0] == "conv1" and split[1] in conv1_bn_layer_map.keys():
+            if split[2] in ["num_batches_tracked"]:
+                logging.warning(f"Ignore num_batches_tracked for layer {pytorch_name}")
+                return None
 
-    # conv1.1.{weight|bias|running_mean|running_var} -> ({params|batch_stats}, bn_init, {scale|bias|mean|var})
-    if split[0] == "conv1" and split[1] == "1":
-        if split[2] in ["num_batches_tracked"]:
-            logging.warning(f"Ignore num_batches_tracked for layer {pytorch_name}")
-            return None
+            return (
+                "params" if split[2] in ["weight", "bias"] else "batch_stats",
+                f"bn_init_{conv1_bn_layer_map[split[1]]}",
+                BN_MAP[split[2]],
+            )
+    else:  # 1x3 or 1x7 blocks only
+        # conv1.0.weight -> (params, conv_init, kernel)
+        if split[0] == "conv1" and split[1] == "0":
+            if split[2] in ["bias"]:
+                logging.warning("conv1.0.bias is not a valid key for BLT models")
+                return None
 
-        return (
-            "params" if split[2] in ["weight", "bias"] else "batch_stats",
-            "bn_init",
-            BN_MAP[split[2]],
-        )
+            return ("params", "conv_init", "kernel")
+
+        # conv1.1.{weight|bias|running_mean|running_var} -> ({params|batch_stats}, bn_init, {scale|bias|mean|var})
+        if split[0] == "conv1" and split[1] == "1":
+            if split[2] in ["num_batches_tracked"]:
+                logging.warning(f"Ignore num_batches_tracked for layer {pytorch_name}")
+                return None
+
+            return (
+                "params" if split[2] in ["weight", "bias"] else "batch_stats",
+                "bn_init",
+                BN_MAP[split[2]],
+            )
 
     ################### Conv Layer Weights and BN Layers ###################
 
@@ -169,7 +197,7 @@ def convert_model(
     # TODO: Add a check that params is frozen and not flat, and not repeat
     jax_params = flatten_dict(unfreeze(jax_params))
 
-    if model_name == "resnet18":
+    if model_name in ["resnet18", "resnet50"]:
         convert_keys = convert_resnet_param_keys
     elif model_name in ["LeNetSmall", "LeNet", "LeNetBig"]:
         convert_keys = convert_lenet_param_keys
