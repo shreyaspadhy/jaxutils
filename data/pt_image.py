@@ -198,7 +198,7 @@ def get_image_dataset(
 
     if dataset_name == "Imagenet":
         train_dir = data_dir / "imagenet/train"
-        val_dir = data_dir / "imagenet/val"
+        val_dir = data_dir / "imagenet/validation"
 
         train_dataset = datasets.ImageFolder(train_dir, transform=transform_train)
 

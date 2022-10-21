@@ -29,9 +29,9 @@ TEST_TRANSFORMATIONS = {"MNIST": "value_range(0, 1)|normalize((0.1307,), (0.3081
 
 COMMON_TRANSFORMATIONS = {"MNIST": "decode(1)", "CIFAR100": "decode(3)"}
 
-TF_TO_PYTORCH_NAMES = {"mnist": "MNIST", "cifar100": "CIFAR100"}
+TF_TO_PYTORCH_NAMES = {"mnist": "MNIST", "cifar100": "CIFAR100", "imagenet2012": "Imagenet"}
 
-PYTORCH_TO_TF_NAMES = {"MNIST": "mnist", "CIFAR100": "cifar100"}
+PYTORCH_TO_TF_NAMES = {"MNIST": "mnist", "CIFAR100": "cifar100", "Imagenet": "imagenet2012"}
 
 
 def get_dataset_builder(
