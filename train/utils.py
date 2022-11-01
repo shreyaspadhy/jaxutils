@@ -13,6 +13,7 @@ from jax.tree_util import tree_map
 from jaxutils.data.utils import get_agnostic_batch
 from jaxutils.utils import tree_concatenate
 
+from tqdm import tqdm
 import wandb
 
 PyTree = Any
@@ -94,7 +95,7 @@ def train_epoch(
 
     em_epoch = em_step * num_epochs + epoch if em_step is not None else epoch
     batch_metrics = []
-    for i in range(steps_per_epoch):
+    for i in tqdm(range(steps_per_epoch)):
         batch = get_agnostic_batch(next(data_iterator), dataset_type)
         n_devices, B = batch[0].shape[:2]
 
