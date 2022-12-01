@@ -15,6 +15,8 @@ from jaxutils.utils import tree_concatenate
 
 from tqdm import tqdm
 import wandb
+import numpy as np
+
 
 PyTree = Any
 
@@ -122,6 +124,8 @@ def train_epoch(
         # over the num_devices. We need to multiply by num_devices to sum
         # over the entire dataset correctly, and then aggregate.
         metrics = unreplicate(metrics)
+        # TODO: put_device here, move metrics to CPU.
+        metrics = {k: np.array(v) for k, v in metrics.items()}
         batch_metrics.append(metrics)
         
         # Further divide by sharded batch size, to get average metrics
