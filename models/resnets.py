@@ -50,6 +50,7 @@ class BottleneckResNetBlock(nn.Module):
     norm: ModuleDef
     act: Callable
     strides: Tuple[int, int] = (1, 1)
+    expansion: int = 4
 
     @nn.compact
     def __call__(self, x):
@@ -61,12 +62,12 @@ class BottleneckResNetBlock(nn.Module):
         # ^ Not using Flax default padding since it doesn't match PyTorch
         y = self.norm()(y)
         y = self.act(y)
-        y = self.conv(self.filters * 4, (1, 1))(y)
+        y = self.conv(self.filters * self.expansion, (1, 1))(y)
         y = self.norm(scale_init=nn.initializers.zeros)(y)
 
         if residual.shape != y.shape:
             residual = self.conv(
-                self.filters * 4, (1, 1), self.strides, name="conv_proj"
+                self.filters * self.expansion, (1, 1), self.strides, name="conv_proj"
             )(residual)
             residual = self.norm(name="norm_proj")(residual)
 
@@ -116,7 +117,18 @@ class ResNet(nn.Module):
             x = norm(name="bn_init")(x)
             x = nn.relu(x)
             x = nn.max_pool(x, (3, 3), strides=(2, 2), padding=((1, 1), (1, 1)))
-        # TODO: Add (3x3) conv block option here.
+        elif self.initial_conv == "3x3":
+            for k in range(3):
+                x = conv(
+                    self.num_filters,
+                    (3, 3),
+                    (1, 1),
+                    padding=[(1, 1), (1, 1)],
+                    name=f"conv_init_{k}",
+                )(x)
+                x = norm(name=f"bn_init_{k}")(x)
+                x = nn.relu(x)
+            x = nn.max_pool(x, (3, 3), strides=(2, 2), padding=((1, 1), (1, 1)))
 
         for i, block_size in enumerate(self.stage_sizes):
             for j in range(block_size):
@@ -138,3 +150,6 @@ class ResNet(nn.Module):
 
 ResNet18 = partial(ResNet, stage_sizes=[2, 2, 2, 2],
                    block_cls=ResNetBlock)
+
+ResNet50 = partial(ResNet, stage_sizes=[3, 4, 6, 3],
+                   block_cls=BottleneckResNetBlock)
