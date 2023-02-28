@@ -10,10 +10,10 @@ from flax.jax_utils import unreplicate
 from flax.training import train_state
 from flax.traverse_util import ModelParamTraversal
 from jax.tree_util import tree_map
-from jaxutils.data.utils import get_agnostic_batch
-from jaxutils.utils import tree_concatenate
 
 import wandb
+from jaxutils.data.utils import get_agnostic_batch
+from jaxutils.utils import tree_concatenate
 
 PyTree = Any
 
@@ -265,7 +265,7 @@ def get_lr_and_schedule(
         lr = optim_config.lr
 
     optimizer = getattr(optax, optim_name)
-    optimizer = optax.inject_hyperparams(optimizer)
+    # optimizer = optax.inject_hyperparams(optimizer)
 
     use_nesterov = optim_config.get("nesterov", False)
     weight_decay = optim_config.get("weight_decay", None)
@@ -273,13 +273,14 @@ def get_lr_and_schedule(
     absolute_clipping = optim_config.get("absolute_clipping", None)
 
     if optim_name == "sgd":
-        optimizer = optimizer(
+        optimizer = optax.inject_hyperparams(optax.sgd)(
             learning_rate=lr, momentum=optim_config.momentum, nesterov=use_nesterov
         )
         if weight_decay is not None:
             optimizer = optax.chain(
                 optimizer, optax.additive_weight_decay(weight_decay, model_mask)
             )
+        
 
     if optim_name == "adamw":
         # If adamw, weight_decay is a passable parameter.
@@ -353,3 +354,19 @@ def get_model_masks(params, param_wd_dict: Union[dict, float]):
         param_masks[name] = subparam_update.update(lambda _: True, all_false)
 
     return param_masks
+
+
+def get_lr_from_opt_state(opt_state):
+    """Returns the learning rate from the opt_state."""
+    if isinstance(opt_state, optax.InjectHyperparamsState):
+        lr = opt_state.hyperparams["learning_rate"]
+    elif isinstance(opt_state, tuple):
+        for o_state in opt_state:
+            if isinstance(o_state, optax.InjectHyperparamsState):
+                lr = o_state.hyperparams["learning_rate"]
+            if isinstance(o_state, tuple):
+                for o_state2 in o_state:
+                    if isinstance(o_state2, optax.InjectHyperparamsState):
+                        lr = o_state2.hyperparams["learning_rate"]
+    
+    return lr

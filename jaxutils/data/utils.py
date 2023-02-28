@@ -1,7 +1,10 @@
 """Utility functions for agnostic datasets across Pytorch and TF."""
+import pickle
+from pathlib import Path
 from typing import Iterator, Optional
 
 import numpy as np
+from flax.training import checkpoints
 from flax.training.common_utils import shard
 
 
@@ -36,3 +39,55 @@ def get_agnostic_iterator(iterator: Iterator, dataset_type: str) -> Iterator:
         iterator = iter(iterator)
 
     return iterator
+
+
+def _get_agnostic_path(path: str, use_gcs=False):
+    if not use_gcs:
+        path = Path(path).resolve()
+        path.mkdir(parents=True, exist_ok=True)
+    return path
+
+def restore_checkpoint(checkpoint_dir: str):
+    """Restore a checkpoint from a given path, including gcs bucket."""
+    checkpoint_dir = _get_agnostic_path(checkpoint_dir, use_gcs=checkpoint_dir.startswith('gs://'))
+
+    checkpoint_path = checkpoints.latest_checkpoint(checkpoint_dir)
+    restored_state = checkpoints.restore_checkpoint(checkpoint_path, target=None)
+
+    return restored_state
+
+
+def save_pickle(obj, path: str, storage_client=None):
+    path = _get_agnostic_path(path, use_gcs=storage_client is not None)
+    if storage_client is not None:
+        bucket = storage_client.bucket('sampled_laplace_data')
+
+        path = str(path[26:])
+        print('save path is ', path)
+        blob = bucket.blob(str(path))
+
+        pickle_out = pickle.dumps(obj)
+        blob.upload_from_string(pickle_out)
+    
+    else:
+        with open(path, 'wb') as f:
+            pickle.dump(obj, f)
+
+
+def load_pickle(path: str, storage_client=None):
+    path = _get_agnostic_path(path, use_gcs=storage_client is not None)
+    if storage_client is not None:
+        bucket = storage_client.bucket('sampled_laplace_data')
+        # strip "gs://sampled_laplace_data/" from path
+        
+        path = str(path[26:])
+        print('load path is ', path)
+        blob = bucket.blob(path)
+
+        pickle_in = blob.download_as_string()
+        obj = pickle.loads(pickle_in)
+    else:
+        with open(path, 'rb') as f:
+            obj = pickle.load(f)
+    
+    return obj
