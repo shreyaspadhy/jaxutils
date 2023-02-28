@@ -9,9 +9,12 @@ from flax.training.common_utils import shard
 
 
 def get_agnostic_batch(
-    batch: np.ndarray, dataset_type: str, tfds_keys: Optional[list] = None
+    batch: np.ndarray, dataset_type: str, 
+    pytorch_keys: Optional[list] = None, tfds_keys: Optional[list] = None,
 ) -> np.ndarray:
     if dataset_type == "pytorch":
+        if pytorch_keys is not None:
+            batch = tuple([batch[k] for k in pytorch_keys])
         batch = shard(batch)
         # TODO: Find a nicer way to be agnostic to TF vs PyTorch
     if dataset_type == "tf":

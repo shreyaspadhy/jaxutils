@@ -86,12 +86,12 @@ def get_config():
 
     # Wandb Configs
     config.wandb = ml_collections.ConfigDict()
-    config.wandb.log = False
+    config.wandb.log = True
     config.wandb.load_model = False
-    config.wandb.project = "sampled-laplace"
-    config.wandb.entity = "cbl-mlg"
+    config.wandb.project = "pmf-training"
+    config.wandb.entity = "shreyaspadhy"
     config.wandb.artifact_name = "lenetsmall_mnist"
     config.wandb.params_log_interval = 10
-    config.wandb.code_dir = "/home/shreyaspadhy_gmail_com/linearised-NNs"
+    config.wandb.code_dir = "/home/shreyaspadhy_gmail_com/collaborative-filtering-jax"
 
     return config

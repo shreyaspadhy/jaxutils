@@ -90,6 +90,8 @@ def train_epoch(
     assert dataset_type in ["tf", "pytorch"]
     
     log_prefix = log_prefix + f"/em_{em_step}" if em_step is not None else log_prefix
+    step_log_prefix = log_prefix.split("/")[0]
+
     em_epoch = em_step * num_epochs + epoch if em_step is not None else epoch
     batch_metrics = []
     for i in range(steps_per_epoch):
@@ -111,8 +113,8 @@ def train_epoch(
             if em_step is not None:
                 global_metrics = add_prefix_to_dict_keys(global_metrics, f"em_{em_step}")
             wandb_run.log({**global_metrics,
-                           **{'linear/train_step': train_step, 
-                              'linear/em_train_step': em_train_step}})
+                           **{f'{step_log_prefix}/train_step': train_step, 
+                              f'{step_log_prefix}/em_train_step': em_train_step}})
         else:
             state, metrics = train_step_fn(state, *batch)
         # These metrics are summed over each sharded batch, and averaged
@@ -123,16 +125,16 @@ def train_epoch(
         
         # Further divide by sharded batch size, to get average metrics
         metrics = {**batchwise_metrics_dict(metrics, B, f"{log_prefix}/batchwise"),
-                   **{'linear/train_step': train_step, 
-                      'linear/em_train_step': em_train_step}}
+                   **{f'{step_log_prefix}/train_step': train_step, 
+                      f'{step_log_prefix}/em_train_step': em_train_step}}
         wandb_run.log(metrics)
 
     epoch_metrics = aggregated_metrics_dict(
         batch_metrics, num_points, log_prefix, n_devices=n_devices
     )
     wandb_run.log({**epoch_metrics,
-                   **{'linear/train_epoch': epoch, 
-                      'linear/em_train_epoch': em_epoch}})
+                   **{f'{step_log_prefix}/train_epoch': epoch, 
+                      f'{step_log_prefix}/em_train_epoch': em_epoch}})
 
     if log_global_metrics:
         return state, epoch_metrics, global_metrics
@@ -314,6 +316,21 @@ def get_lr_and_schedule(
 
     return optimizer
 
+
+def get_lr_from_opt_state(opt_state):
+    """Returns the learning rate from the opt_state."""
+    if isinstance(opt_state, optax.InjectHyperparamsState):
+        lr = opt_state.hyperparams["learning_rate"]
+    elif isinstance(opt_state, tuple):
+        for o_state in opt_state:
+            if isinstance(o_state, optax.InjectHyperparamsState):
+                lr = o_state.hyperparams["learning_rate"]
+            if isinstance(o_state, tuple):
+                for o_state2 in o_state:
+                    if isinstance(o_state2, optax.InjectHyperparamsState):
+                        lr = o_state2.hyperparams["learning_rate"]
+    
+    return lr
 
 def get_model_masks(params, param_wd_dict: Union[dict, float]):
     """Create boolean masks on Pytrees for model parameters.
