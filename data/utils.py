@@ -72,8 +72,9 @@ def save_pickle(obj, path: str, storage_client=None):
 
 
 def load_pickle(path: str, storage_client=None):
-    path = _get_agnostic_path(path, use_gcs=storage_client is not None)
+    
     if storage_client is not None:
+        path = _get_agnostic_path(path, use_gcs=storage_client is not None)
         bucket = storage_client.bucket('sampled_laplace_data')
         # strip "gs://sampled_laplace_data/" from path
         
