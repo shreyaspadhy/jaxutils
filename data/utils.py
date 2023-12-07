@@ -6,8 +6,10 @@ from flax.training.common_utils import shard
 
 
 def get_agnostic_batch(
-    batch: np.ndarray, dataset_type: str, 
-    pytorch_keys: Optional[list] = None, tfds_keys: Optional[list] = None,
+    batch: np.ndarray,
+    dataset_type: str,
+    pytorch_keys: Optional[list] = None,
+    tfds_keys: Optional[list] = None,
 ) -> np.ndarray:
     if dataset_type == "pytorch":
         if pytorch_keys is not None:
@@ -26,6 +28,9 @@ def get_agnostic_batch(
         batch = tuple([batch[k] for k in tfds_keys])
         # batch = (batch['image'], batch['label'])
 
+    # Add a redundant axis for the n_devices dimension if batch[0] is 4-dimensional
+    if len(batch[0].shape) == 4:
+        batch = tuple([np.expand_dims(x, axis=0) for x in batch])
     return batch
 
 

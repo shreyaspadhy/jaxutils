@@ -4,16 +4,16 @@ import jax
 import jax.numpy as jnp
 import ml_collections
 import optax
+import wandb
 from flax import jax_utils
 from flax.core.frozen_dict import FrozenDict
 from flax.jax_utils import unreplicate
 from flax.training import train_state
 from flax.traverse_util import ModelParamTraversal
 from jax.tree_util import tree_map
+
 from jaxutils.data.utils import get_agnostic_batch
 from jaxutils.utils import tree_concatenate
-
-import wandb
 
 PyTree = Any
 
@@ -69,9 +69,11 @@ def batchwise_metrics_dict(metrics_dict, batch_size, prefix):
 
     return new_metrics_dict
 
+
 def add_prefix_to_dict_keys(d, prefix):
     """Add prefix to all keys in a dictionary."""
     return {f"{prefix}/{k}": v for k, v in d.items()}
+
 
 def train_epoch(
     train_step_fn: Callable,
@@ -88,7 +90,7 @@ def train_epoch(
     em_step: Optional[int] = None,
 ):
     assert dataset_type in ["tf", "pytorch"]
-    
+
     log_prefix = log_prefix + f"/em_{em_step}" if em_step is not None else log_prefix
     step_log_prefix = log_prefix.split("/")[0]
 
@@ -98,12 +100,11 @@ def train_epoch(
         batch = get_agnostic_batch(next(data_iterator), dataset_type)
         n_devices, B = batch[0].shape[:2]
 
-        
         if log_global_metrics:
             state, metrics, global_metrics = train_step_fn(state, *batch)
         else:
             state, metrics = train_step_fn(state, *batch)
-        
+
         ######################## EVERYTHING BELOW IS FOR W&B LOGGING ##############
         train_step = epoch * steps_per_epoch + i
         em_train_step = em_epoch * steps_per_epoch + i
@@ -111,10 +112,19 @@ def train_epoch(
         if log_global_metrics:
             global_metrics = unreplicate(global_metrics)
             if em_step is not None:
-                global_metrics = add_prefix_to_dict_keys(global_metrics, f"em_{em_step}")
-            wandb_run.log({**global_metrics,
-                           **{f'{step_log_prefix}/train_step': train_step, 
-                              f'{step_log_prefix}/em_train_step': em_train_step}})
+                global_metrics = add_prefix_to_dict_keys(
+                    global_metrics, f"em_{em_step}"
+                )
+            if wandb_run is not None:
+                wandb_run.log(
+                    {
+                        **global_metrics,
+                        **{
+                            f"{step_log_prefix}/train_step": train_step,
+                            f"{step_log_prefix}/em_train_step": em_train_step,
+                        },
+                    }
+                )
         else:
             state, metrics = train_step_fn(state, *batch)
         # These metrics are summed over each sharded batch, and averaged
@@ -122,19 +132,31 @@ def train_epoch(
         # over the entire dataset correctly, and then aggregate.
         metrics = unreplicate(metrics)
         batch_metrics.append(metrics)
-        
+
         # Further divide by sharded batch size, to get average metrics
-        metrics = {**batchwise_metrics_dict(metrics, B, f"{log_prefix}/batchwise"),
-                   **{f'{step_log_prefix}/train_step': train_step, 
-                      f'{step_log_prefix}/em_train_step': em_train_step}}
-        wandb_run.log(metrics)
+        metrics = {
+            **batchwise_metrics_dict(metrics, B, f"{log_prefix}/batchwise"),
+            **{
+                f"{step_log_prefix}/train_step": train_step,
+                f"{step_log_prefix}/em_train_step": em_train_step,
+            },
+        }
+        if wandb_run is not None:
+            wandb_run.log(metrics)
 
     epoch_metrics = aggregated_metrics_dict(
         batch_metrics, num_points, log_prefix, n_devices=n_devices
     )
-    wandb_run.log({**epoch_metrics,
-                   **{f'{step_log_prefix}/train_epoch': epoch, 
-                      f'{step_log_prefix}/em_train_epoch': em_epoch}})
+    if wandb_run is not None:
+        wandb_run.log(
+            {
+                **epoch_metrics,
+                **{
+                    f"{step_log_prefix}/train_epoch": epoch,
+                    f"{step_log_prefix}/em_train_epoch": em_epoch,
+                },
+            }
+        )
 
     if log_global_metrics:
         return state, epoch_metrics, global_metrics
@@ -159,9 +181,12 @@ def eval_epoch(
         batch = get_agnostic_batch(next(data_iterator), dataset_type)
         n_devices, B = batch[0].shape[:2]
 
+        # print("debug : ", batch[0].shape)
+
         if log_global_metrics:
             metrics, global_metrics = eval_step_fn(state, *batch)
-            wandb_run.log(unreplicate(global_metrics))
+            if wandb_run is not None:
+                wandb_run.log(unreplicate(global_metrics))
         else:
             metrics = eval_step_fn(state, *batch)
         # These metrics are summed over each sharded batch, and averaged
@@ -170,12 +195,14 @@ def eval_epoch(
         metrics = unreplicate(metrics)
         batch_metrics.append(metrics)
         # Further divide by sharded batch size, to get average metrics
-        wandb_run.log(batchwise_metrics_dict(metrics, B, f"{log_prefix}/batchwise"))
+        if wandb_run is not None:
+            wandb_run.log(batchwise_metrics_dict(metrics, B, f"{log_prefix}/batchwise"))
 
     epoch_metrics = aggregated_metrics_dict(
         batch_metrics, num_points, log_prefix, n_devices=n_devices
     )
-    wandb_run.log(epoch_metrics)
+    if wandb_run is not None:
+        wandb_run.log(epoch_metrics)
 
     if log_global_metrics:
         return epoch_metrics, global_metrics
@@ -232,11 +259,16 @@ def get_lr_and_schedule(
 
         elif lr_schedule_name == "warmup_exponential_decay_schedule":
             # Check required configs are present
-            required_configs = ["init_value", "warmup_steps", "transition_steps",
-                                "decay_rate", "transition_begin",]
+            required_configs = [
+                "init_value",
+                "warmup_steps",
+                "transition_steps",
+                "decay_rate",
+                "transition_begin",
+            ]
             if not all(name in lr_schedule_config for name in required_configs):
                 raise ValueError(f"{lr_schedule_name} requires {required_configs}")
-            
+
             # Define RL Schedule
             lr = schedule(
                 init_value=lr_schedule_config.init_value,
@@ -244,7 +276,8 @@ def get_lr_and_schedule(
                 warmup_steps=lr_schedule_config.warmup_steps,
                 transition_steps=lr_schedule_config.transition_steps,
                 decay_rate=lr_schedule_config.decay_rate,
-                transition_begin=lr_schedule_config.transition_begin,)
+                transition_begin=lr_schedule_config.transition_begin,
+            )
 
         elif lr_schedule_name == "linear_schedule":
             # Check required configs are present
@@ -260,7 +293,7 @@ def get_lr_and_schedule(
             )
         else:
             raise ValueError("Scheduler not supported")
-    
+
     else:
         lr = optim_config.lr
 
@@ -291,12 +324,7 @@ def get_lr_and_schedule(
         optimizer = optimizer(learning_rate=lr)
 
     if absolute_clipping is not None:
-        
-        optimizer = optax.chain(
-            optax.clip_by_global_norm(absolute_clipping),
-            optimizer
-        )
-
+        optimizer = optax.chain(optax.clip_by_global_norm(absolute_clipping), optimizer)
 
     # if optim_config.get("weight_decay", None) is not None:
     #     if optim_name == "sgd":
@@ -328,8 +356,9 @@ def get_lr_from_opt_state(opt_state):
                 for o_state2 in o_state:
                     if isinstance(o_state2, optax.InjectHyperparamsState):
                         lr = o_state2.hyperparams["learning_rate"]
-    
+
     return lr
+
 
 def get_model_masks(params, param_wd_dict: Union[dict, float]):
     """Create boolean masks on Pytrees for model parameters.
@@ -343,7 +372,7 @@ def get_model_masks(params, param_wd_dict: Union[dict, float]):
     # If weight_decay params is a float, return all params to perform wd over.
     if isinstance(param_wd_dict, float):
         all_true = jax.tree_map(lambda _: True, params)
-        print('resturn all')
+        print("resturn all")
         return all_true
     # Otherwise, iterate through dict, and return dict of model masks.
     all_false = jax.tree_map(lambda _: False, params)

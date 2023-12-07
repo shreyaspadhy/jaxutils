@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import optax
 from flax import linen as nn
 from jax.tree_util import tree_map
+
 from jaxutils.utils import get_agg_fn
 
 
@@ -17,7 +18,7 @@ def create_crossentropy_loss(
     num_classes: int,
     train: bool = False,
     aggregate: str = "mean",
-    **kwargs: Any
+    **kwargs: Any,
 ) -> Callable:
     """Creates crossentropy loss used for classification tasks.
 
@@ -100,6 +101,8 @@ def create_eval_step(model, num_classes):
 def _create_loss_and_metrics(batch_logits, batch_labels, num_classes):
     # optax.softmax_cross_entropy takes in one-hot labels
     labels_onehot = jax.nn.one_hot(batch_labels, num_classes=num_classes)
+
+    print("debug : ", batch_logits.shape, labels_onehot.shape)
     loss = optax.softmax_cross_entropy(batch_logits, labels_onehot)
 
     accuracy = jnp.argmax(batch_logits, -1) == batch_labels
