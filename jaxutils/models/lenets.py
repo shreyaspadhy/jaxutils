@@ -89,6 +89,21 @@ class LeNet(nn.Module):
         return x
 
 
+class LastLayer(nn.Module):
+    n_out: int
+    dtype: Any = jnp.float32
+
+    def setup(self):
+        self.dense = nn.Dense(self.n_out, dtype=self.dtype)
+
+    def __call__(self, x, train: bool = True):
+        # print("debug", x.shape)
+        x = self.dense(x)
+        x = jnp.asarray(x, self.dtype)
+
+        return x
+
+
 class LeNetSmall(LeNet):
     def setup(self):
         self.conv1 = conv5_block(16, stride=2)

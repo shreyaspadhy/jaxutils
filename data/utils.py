@@ -29,7 +29,7 @@ def get_agnostic_batch(
         # batch = (batch['image'], batch['label'])
 
     # Add a redundant axis for the n_devices dimension if batch[0] is 4-dimensional
-    if len(batch[0].shape) == 4:
+    if len(batch[0].shape) in [2, 4]:
         batch = tuple([np.expand_dims(x, axis=0) for x in batch])
     return batch
 

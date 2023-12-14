@@ -3,8 +3,8 @@ Taken from: colab.research.google.com/github/google/jax/blob/main/docs/notebooks
 """
 
 import numpy as np
-from torch.utils import data
 from PIL import Image
+from torch.utils import data
 
 
 class NumpyLoader(data.DataLoader):
@@ -47,12 +47,25 @@ def _numpy_collate(batch):
         transposed = zip(*batch)
         return [_numpy_collate(samples) for samples in transposed]
     else:
+        # Check if batch is cuda tensor, then move to cpu
+        if batch[0].is_cuda:
+            # print(type(batch), len(batch), batch[0].shape, batch[1].shape)
+            batch = tuple([b.cpu().numpy() for b in batch])
+            return np.stack(batch)
+            # for b in batch:
+            #     print(b.shape)
+            # return np.array(batch)
+        # Check if batch is torch tensor, then move to cpu
+        if batch[0].__class__.__module__ == "torch":
+            batch = tuple([b.numpy() for b in batch])
+            return np.stack(batch)
+            # return np.array(batch)
+        # print(type(batch))
         return np.array(batch)
 
 
 # Taken from https://github.com/edaxberger/bayesian-lottery-tickets/blob/a3e67ad593b2716b6c1fac272916f887349740cc/src/utils.py#L231
 class Datafeed(data.Dataset):
-
     def __init__(self, x_train, y_train=None, transform=None):
         self.data = x_train
         self.targets = y_train

@@ -102,7 +102,6 @@ def _create_loss_and_metrics(batch_logits, batch_labels, num_classes):
     # optax.softmax_cross_entropy takes in one-hot labels
     labels_onehot = jax.nn.one_hot(batch_labels, num_classes=num_classes)
 
-    print("debug : ", batch_logits.shape, labels_onehot.shape)
     loss = optax.softmax_cross_entropy(batch_logits, labels_onehot)
 
     accuracy = jnp.argmax(batch_logits, -1) == batch_labels
